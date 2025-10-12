@@ -598,6 +598,17 @@
             transform: none;
         }
 
+        .btn-icon-circular {
+            padding: 0.5rem;
+            width: 3rem;
+            height: 3rem;
+        }
+
+        .btn-icon-circular svg {
+            width: 100%;
+            height: 100%;
+        }
+
         .btn-play {
             background: #f59e0b;
             color: white;
@@ -1122,14 +1133,22 @@
 
             <div class="controls-panel">
                 <div class="controls-main">
-                    <button class="btn" id="prevBtn" disabled>
-                        <span class="btn-icon">⮜</span>
+                    <button class="btn btn-icon-circular" id="prevBtn" disabled>
+                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+                            <path d="M14 8l-4 4 4 4M10 12h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                            <rect x="8" y="8" width="1.5" height="8" fill="currentColor"/>
+                        </svg>
                     </button>
                     <button class="btn btn-play" id="playBtn" disabled>
                         <span class="btn-icon">▶</span>
                     </button>
-                    <button class="btn" id="nextBtn" disabled>
-                        <span class="btn-icon">⮞</span>
+                    <button class="btn btn-icon-circular" id="nextBtn" disabled>
+                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+                            <path d="M10 8l4 4-4 4M14 12h-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                            <rect x="14.5" y="8" width="1.5" height="8" fill="currentColor"/>
+                        </svg>
                     </button>
                 </div>
 
