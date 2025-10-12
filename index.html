@@ -1,0 +1,3354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EPUB3 Media Overlay Reader</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1e40af;
+            --secondary: #64748b;
+            --accent: #f59e0b;
+            --bg-main: #0f172a;
+            --bg-card: #1e293b;
+            --bg-reader: #ffffff;
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --border: #334155;
+            --shadow: rgba(0, 0, 0, 0.3);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-main);
+            color: var(--text-primary);
+            overflow: hidden;
+            line-height: 1.6;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            height: 100dvh;
+        }
+
+        /* Library View Styles */
+        .library-view {
+            flex: 1;
+            overflow-y: auto;
+            padding: 2rem;
+            display: none;
+        }
+
+        .library-view.active {
+            display: block;
+        }
+
+        .library-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .library-title {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .library-stats {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .library-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .book-card {
+            background: var(--bg-card);
+            border-radius: 0.75rem;
+            overflow: hidden;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+            position: relative;
+        }
+
+        .book-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.3);
+            border-color: var(--primary);
+        }
+
+        .book-card-cover {
+            width: 100%;
+            height: 280px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .book-card-cover img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .book-card-progress {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .book-card-progress-bar {
+            height: 100%;
+            background: var(--accent);
+            transition: width 0.3s ease;
+        }
+
+        .book-card-info {
+            padding: 1rem;
+        }
+
+        .book-card-title {
+            font-weight: 600;
+            font-size: 1rem;
+            color: var(--text-primary);
+            margin-bottom: 0.25rem;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .book-card-author {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+            display: -webkit-box;
+            -webkit-line-clamp: 1;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .book-card-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+            padding-top: 0.5rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .book-card-actions {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            display: flex;
+            gap: 0.25rem;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .book-card:hover .book-card-actions {
+            opacity: 1;
+        }
+
+        .book-card-action-btn {
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border: none;
+            width: 2rem;
+            height: 2rem;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.875rem;
+            transition: all 0.2s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .book-card-action-btn:hover {
+            background: rgba(220, 38, 38, 0.9);
+            transform: scale(1.1);
+        }
+
+        .empty-library {
+            text-align: center;
+            padding: 4rem 2rem;
+        }
+
+        .empty-library-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            opacity: 0.3;
+        }
+
+        .empty-library-text {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+        }
+
+        /* Reader View Styles */
+        .reader-view {
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .reader-view.active {
+            display: flex;
+        }
+
+        .header {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 1.5rem;
+            position: relative;
+            z-index: 100;
+        }
+
+        .header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .file-upload-wrapper {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .file-upload-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 0.9375rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            border: none;
+            display: flex;
+            align-items: center;
+            gap: 0.625rem;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .file-upload-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        .file-upload-btn:active {
+            transform: translateY(0);
+        }
+
+        input[type="file"] {
+            position: absolute;
+            opacity: 0;
+            cursor: pointer;
+            width: 100%;
+            height: 100%;
+            left: 0;
+            top: 0;
+        }
+
+        .icon-btn {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 0.625rem;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 2.5rem;
+            height: 2.5rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .icon-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            color: var(--text-primary);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .status-bar {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            padding: 0.75rem 1rem;
+            background: var(--bg-main);
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .book-info {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            width: 100%;
+        }
+
+        .book-cover {
+            flex-shrink: 0;
+            width: 60px;
+            height: 60px;
+            border-radius: 0.375rem;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .book-cover img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .book-details {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .book-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 0.25rem;
+        }
+
+        .book-author {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 0.25rem;
+        }
+
+        .book-chapter {
+            font-size: 0.8125rem;
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .reader-area {
+            flex: 1;
+            background: var(--bg-reader);
+            position: relative;
+            overflow-y: auto;
+            overflow-x: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .reader-area.fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 1000;
+        }
+
+        .reader-controls {
+            position: fixed;
+            bottom: 1rem;
+            right: 1rem;
+            display: flex;
+            gap: 0.5rem;
+            z-index: 1100;
+            pointer-events: auto;
+        }
+
+        @media (max-width: 768px) {
+            .reader-controls {
+                bottom: 1rem;
+            }
+        }
+
+        .reader-area.dark-mode {
+            background: #1a1a1a;
+        }
+
+        .reader-area.dark-mode #viewer {
+            color: #e0e0e0;
+        }
+
+        .reader-area.dark-mode #viewer h1,
+        .reader-area.dark-mode #viewer h2,
+        .reader-area.dark-mode #viewer h3 {
+            color: #f0f0f0;
+        }
+
+        .reader-area.dark-mode .epub-media-overlay-active {
+            background-color: #ffa500 !important;
+            color: #000 !important;
+        }
+
+        .reader-area.fullscreen .reader-controls {
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(10px);
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+        }
+
+        .reader-btn {
+            background: rgba(255, 255, 255, 0.95);
+            border: none;
+            color: #475569;
+            padding: 0.625rem;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.75rem;
+            height: 2.75rem;
+            font-size: 1.25rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            backdrop-filter: blur(10px);
+        }
+
+        .reader-btn:hover {
+            background: white;
+            transform: translateY(-2px) scale(1.05);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        .reader-btn:active {
+            transform: translateY(0) scale(1);
+        }
+
+        .reader-btn.active {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+        }
+
+        .reader-btn svg {
+            width: 24px;
+            height: 24px;
+            fill: currentColor;
+        }
+
+        .reader-area.fullscreen .reader-btn {
+            background: rgba(255, 255, 255, 0.95);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        }
+
+        #viewer {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 3rem 2rem;
+            font-size: 1.125rem;
+            line-height: 1.8;
+            color: #1e293b;
+        }
+
+        #viewer img {
+            max-width: 100% !important;
+            height: auto !important;
+            display: block;
+            margin: 1rem auto;
+        }
+
+        #viewer h1, #viewer h2, #viewer h3 {
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+            color: #0f172a;
+            font-weight: 700;
+        }
+
+        #viewer h1 {
+            font-size: 2rem;
+        }
+
+        #viewer h2 {
+            font-size: 1.5rem;
+        }
+
+        #viewer h3 {
+            font-size: 1.25rem;
+        }
+
+        #viewer p {
+            margin-bottom: 1.25rem;
+        }
+
+        .epub-media-overlay-active {
+            background-color: #fef3c7 !important;
+            color: #92400e !important;
+            padding: 0.125rem 0.25rem;
+            border-radius: 0.25rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.2);
+        }
+
+        .controls-panel {
+            background: var(--bg-card);
+            border-top: 1px solid var(--border);
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .controls-main {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            background: #334155;
+            color: var(--text-primary);
+            border: none;
+            padding: 0.75rem;
+            border-radius: 9999px;
+            cursor: pointer;
+            font-size: 0.9375rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.625rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            width: 3rem;
+            height: 3rem;
+        }
+
+        .btn:hover:not(:disabled) {
+            background: #475569;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            background: #1e293b;
+            color: #475569;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-play {
+            background: #f59e0b;
+            color: white;
+            padding: 1rem;
+            font-size: 1.0625rem;
+            border: none;
+            width: 4rem;
+            height: 4rem;
+            justify-content: center;
+            box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4);
+        }
+
+        .btn-play:hover:not(:disabled) {
+            background: #d97706;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.6);
+        }
+
+        .btn-play:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .btn-text {
+            display: none;
+        }
+
+        .btn-icon {
+            font-size: 1.25rem;
+        }
+
+        .btn-play .btn-icon {
+            font-size: 1.5rem;
+        }
+
+        .speed-control {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0;
+            background: transparent;
+            border-radius: 0;
+            font-size: 0.875rem;
+            border: none;
+            box-shadow: none;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .speed-btn {
+            background: #334155;
+            color: #cbd5e1;
+            border: none;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            min-width: 3rem;
+        }
+
+        .speed-btn:hover {
+            background: #475569;
+        }
+
+        .speed-btn.active {
+            background: #f59e0b;
+            color: white;
+        }
+
+        .speed-icon {
+            display: none;
+        }
+
+        #speedSlider {
+            display: none;
+        }
+
+        #speedDisplay {
+            display: none;
+        }
+
+        .debug-panel {
+            background: var(--bg-main);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-top: 1rem;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 0.75rem;
+            font-family: 'Courier New', monospace;
+        }
+
+        .debug-panel h3 {
+            margin-bottom: 0.5rem;
+            color: var(--accent);
+            font-size: 0.875rem;
+        }
+
+        .debug-item {
+            padding: 0.25rem 0;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+
+        .debug-item:last-child {
+            border-bottom: none;
+        }
+
+        .notification {
+            position: fixed;
+            top: 5rem;
+            right: 1rem;
+            background: white;
+            color: #0f172a;
+            padding: 1rem 1.5rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            z-index: 2000;
+            animation: slideIn 0.3s ease;
+            max-width: 400px;
+            border-left: 4px solid var(--primary);
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(calc(100% + 2rem));
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .notification.error {
+            border-left-color: #dc2626;
+            background: #fef2f2;
+            color: #7f1d1d;
+        }
+
+        .notification.success {
+            border-left-color: #16a34a;
+            background: #f0fdf4;
+            color: #14532d;
+        }
+
+        .notification.info {
+            border-left-color: var(--primary);
+            background: #eff6ff;
+            color: #1e3a8a;
+        }
+
+        /* Mobile Responsive */
+        @media (max-width: 768px) {
+            .library-grid {
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                gap: 1rem;
+            }
+
+            .book-card-cover {
+                height: 220px;
+            }
+
+            h1 {
+                font-size: 1.125rem;
+            }
+
+            .header {
+                padding: 0.875rem 1rem;
+            }
+
+            .header-top {
+                margin-bottom: 0.75rem;
+            }
+
+            .file-upload-btn {
+                padding: 0.5rem 1rem;
+                font-size: 0.8125rem;
+            }
+
+            #viewer {
+                padding: 2rem 1rem;
+                font-size: 1rem;
+            }
+
+            .controls-panel {
+                padding: 1rem;
+            }
+
+            .controls-main {
+                gap: 0.5rem;
+            }
+
+            .speed-control {
+                font-size: 0.8125rem;
+                padding: 0.5rem 0.75rem;
+            }
+
+            .status-bar {
+                font-size: 0.8125rem;
+                gap: 0.75rem;
+            }
+
+            .notification {
+                right: 1rem;
+                left: 1rem;
+                max-width: none;
+            }
+        }
+
+        .reader-area.dark-mode::-webkit-scrollbar-track {
+            background: #2a2a2a;
+        }
+
+        .reader-area.dark-mode::-webkit-scrollbar-thumb {
+            background: #555;
+        }
+
+        .reader-area.dark-mode::-webkit-scrollbar-thumb:hover {
+            background: #666;
+        }
+
+        /* Scrollbar Styling */
+        .reader-area::-webkit-scrollbar,
+        .library-view::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .reader-area::-webkit-scrollbar-track,
+        .library-view::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+
+        .reader-area::-webkit-scrollbar-thumb,
+        .library-view::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        .reader-area::-webkit-scrollbar-thumb:hover,
+        .library-view::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        .library-view::-webkit-scrollbar-track {
+            background: var(--bg-main);
+        }
+
+        .library-view::-webkit-scrollbar-thumb {
+            background: var(--border);
+        }
+
+        .debug-panel::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .debug-panel::-webkit-scrollbar-track {
+            background: var(--bg-card);
+        }
+
+        .debug-panel::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+
+        /* Cloud Import Modal */
+        .cloud-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .cloud-modal-content {
+            background: var(--bg-card);
+            border-radius: 1rem;
+            padding: 2rem;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+        }
+
+        .cloud-modal-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .cloud-modal-description {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 1.5rem;
+            line-height: 1.5;
+        }
+
+        .cloud-modal-input {
+            width: 100%;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            border: 1px solid var(--border);
+            background: var(--bg-main);
+            color: var(--text-primary);
+            font-size: 0.9375rem;
+            margin-bottom: 1rem;
+            font-family: inherit;
+        }
+
+        .cloud-modal-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .cloud-modal-buttons {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: flex-end;
+        }
+
+        .cloud-modal-btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            border: none;
+            font-size: 0.9375rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .cloud-modal-btn-primary {
+            background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+            color: white;
+        }
+
+        .cloud-modal-btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(6, 182, 212, 0.4);
+        }
+
+        .cloud-modal-btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .cloud-modal-btn-secondary {
+            background: var(--bg-main);
+            color: var(--text-primary);
+        }
+
+        .cloud-modal-btn-secondary:hover {
+            background: var(--border);
+        }
+
+        .cloud-help {
+            background: rgba(6, 182, 212, 0.1);
+            border: 1px solid rgba(6, 182, 212, 0.3);
+            border-radius: 0.5rem;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            font-size: 0.8125rem;
+            color: var(--text-secondary);
+        }
+
+        .cloud-help-title {
+            font-weight: 600;
+            color: #06b6d4;
+            margin-bottom: 0.25rem;
+        }
+
+        .cloud-icon-badge {
+            position: absolute;
+            bottom: 0.5rem;
+            right: 0.5rem;
+            background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            box-shadow: 0 2px 8px rgba(6, 182, 212, 0.4);
+            z-index: 10;
+        }
+
+        /* Loading Spinner */
+        .book-loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            backdrop-filter: blur(4px);
+        }
+
+        .book-loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #06b6d4;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .book-loading-text {
+            color: white;
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-top: 0.75rem;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Library View -->
+        <div class="library-view active" id="libraryView">
+            <div class="library-header">
+                <div>
+                    <h1 class="library-title">📚 My Library</h1>
+                    <p class="library-stats" id="libraryStats">0 books</p>
+                </div>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <div class="file-upload-wrapper">
+                        <button class="file-upload-btn">
+                            <span>➕ Add Book</span>
+                        </button>
+                        <input type="file" id="libraryEpubInput" accept=".epub" />
+                    </div>
+                    <button class="file-upload-btn" id="addFromCloudBtn" style="background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%); box-shadow: 0 4px 15px rgba(6, 182, 212, 0.4);">
+                        <span>☁️ Add from Cloud</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="library-grid" id="libraryGrid">
+                <!-- Book cards will be inserted here -->
+            </div>
+            
+            <div class="empty-library" id="emptyLibrary">
+                <div class="empty-library-icon">📖</div>
+                <p class="empty-library-text">Your library is empty</p>
+                <p style="color: var(--text-secondary); font-size: 0.875rem;">Add an EPUB book to get started</p>
+            </div>
+        </div>
+
+        <!-- Reader View -->
+        <div class="reader-view" id="readerView">
+            <div class="header">
+                <div class="header-top">
+                    <h1>
+                        <span>📖</span>
+                        <span>EPUB Reader</span>
+                    </h1>
+                    <div class="header-actions">
+                        <button class="icon-btn" id="backToLibraryBtn" title="Back to Library">
+                            ← Library
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="status-bar" id="statusBar" style="display: none;">
+                    <div class="book-info" id="bookInfo">
+                        <div class="book-cover" id="bookCover" style="display: none;">
+                            <img id="bookCoverImage" alt="Book cover" />
+                        </div>
+                        <div class="book-details">
+                            <div class="book-title" id="bookTitle">Book Title</div>
+                            <div class="book-author" id="bookAuthor">Author Name</div>
+                            <div class="book-chapter" id="bookChapter">Chapter 1</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="debugPanel" class="debug-panel" style="display: none;">
+                    <h3>Debug Information</h3>
+                    <div id="debugContent"></div>
+                </div>
+            </div>
+
+            <div class="main-content">
+                <div class="reader-area" id="readerArea">
+                    <div class="reader-controls">
+                        <button class="reader-btn" id="wakeLockBtn" title="Keep Screen Awake">
+                            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                            </svg>
+                        </button>
+                        <button class="reader-btn" id="darkModeBtn" title="Toggle Dark Mode">
+                            ☾
+                        </button>
+                        <button class="reader-btn" id="fullscreenBtn" title="Toggle Fullscreen">
+                            ⛶
+                        </button>
+                    </div>
+                    <div id="viewer"></div>
+                </div>
+            </div>
+
+            <div class="controls-panel">
+                <div class="controls-main">
+                    <button class="btn" id="prevBtn" disabled>
+                        <span class="btn-icon">⮜</span>
+                    </button>
+                    <button class="btn btn-play" id="playBtn" disabled>
+                        <span class="btn-icon">▶</span>
+                    </button>
+                    <button class="btn" id="nextBtn" disabled>
+                        <span class="btn-icon">⮞</span>
+                    </button>
+                </div>
+
+                <div class="controls-main">
+                    <div class="speed-control">
+                        <button class="speed-btn" data-speed="0.5">0.5x</button>
+                        <button class="speed-btn" data-speed="0.75">0.75x</button>
+                        <button class="speed-btn active" data-speed="1">1x</button>
+                        <button class="speed-btn" data-speed="1.25">1.25x</button>
+                        <button class="speed-btn" data-speed="1.5">1.5x</button>
+                        <button class="speed-btn" data-speed="2">2x</button>
+                    </div>
+                    <input type="range" id="speedSlider" min="0.5" max="2" step="0.1" value="1" />
+                    <span id="speedDisplay">1.0x</span>
+                </div>
+
+                <div class="controls-main">
+                    <button class="btn" id="chaptersBtn" disabled style="width: auto; padding: 0.75rem 1.5rem; border-radius: 12px;">
+                        <span style="margin-right: 0.5rem;">📑</span>
+                        <span>Table of Contents</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        console.log('=== EPUB Reader Starting ===');
+        
+        // Library Manager
+        class LibraryManager {
+            constructor() {
+                this.books = [];
+                this.loadFromStorage();
+            }
+
+            loadFromStorage() {
+                try {
+                    const stored = localStorage.getItem('epubLibrary');
+                    if (stored) {
+                        const parsed = JSON.parse(stored);
+                        // Ensure it's an array
+                        if (Array.isArray(parsed)) {
+                            this.books = parsed;
+                        } else {
+                            console.warn('Stored library data is not an array, resetting');
+                            this.books = [];
+                            this.saveToStorage();
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error loading library:', error);
+                    this.books = [];
+                    // Clear corrupted data
+                    localStorage.removeItem('epubLibrary');
+                }
+            }
+
+            saveToStorage() {
+                try {
+                    // Ensure books is an array before saving
+                    if (!Array.isArray(this.books)) {
+                        console.error('Books is not an array, cannot save');
+                        this.books = [];
+                    }
+                    
+                    const dataToSave = JSON.stringify(this.books);
+                    localStorage.setItem('epubLibrary', dataToSave);
+                    
+                } catch (error) {
+                    console.error('Error saving library:', error);
+                    
+                    // If quota exceeded, try emergency cleanup
+                    if (error.name === 'QuotaExceededError') {
+                        console.log('Storage quota exceeded, attempting cleanup...');
+                        
+                        // Remove all cached book data and try again
+                        this.books.forEach(book => {
+                            delete book.fileData;
+                            book.isCached = false;
+                        });
+                        
+                        try {
+                            const cleanedData = JSON.stringify(this.books);
+                            localStorage.setItem('epubLibrary', cleanedData);
+                            console.log('Successfully saved after removing cached book data');
+                            throw new Error('Storage full - removed cached book data to save library');
+                        } catch (secondError) {
+                            // If still failing, try removing cover images
+                            this.books.forEach(book => {
+                                delete book.coverImage;
+                            });
+                            
+                            try {
+                                const minimalData = JSON.stringify(this.books);
+                                localStorage.setItem('epubLibrary', minimalData);
+                                console.log('Successfully saved after removing covers and cached data');
+                                throw new Error('Storage critically full - removed covers to save library');
+                            } catch (thirdError) {
+                                console.error('Could not save even minimal library data');
+                                throw new Error('Storage quota exceeded - cannot save library');
+                            }
+                        }
+                    } else {
+                        throw error;
+                    }
+                }
+            }
+
+            addBook(bookData, cacheFileData = false) {
+                // Ensure books is an array
+                if (!Array.isArray(this.books)) {
+                    console.warn('Books was not an array, resetting');
+                    this.books = [];
+                }
+                
+                // Check if book already exists
+                const existingIndex = this.books.findIndex(b => b.id === bookData.id);
+                
+                // If we're caching this book's file data, clear file data from all other books
+                if (cacheFileData && bookData.fileData) {
+                    this.books.forEach(book => {
+                        if (book.id !== bookData.id) {
+                            delete book.fileData;
+                        }
+                    });
+                }
+                
+                // Create book entry - only include fileData if caching
+                const bookEntry = {
+                    id: bookData.id,
+                    title: bookData.title,
+                    author: bookData.author,
+                    coverImage: bookData.coverImage,
+                    addedDate: bookData.addedDate || new Date().toISOString(),
+                    lastRead: bookData.lastRead || null,
+                    progress: bookData.progress || {
+                        chapterIndex: 0,
+                        segmentIndex: 0,
+                        percentage: 0
+                    },
+                    source: bookData.source || 'local', // 'local' or 'cloud'
+                    cloudUrl: bookData.cloudUrl || null // Store cloud URL if from cloud
+                };
+                
+                // Only include file data if explicitly caching
+                if (cacheFileData && bookData.fileData) {
+                    bookEntry.fileData = bookData.fileData;
+                    bookEntry.isCached = true;
+                } else {
+                    bookEntry.isCached = false;
+                }
+                
+                if (existingIndex !== -1) {
+                    // Update existing book, preserving any existing data
+                    this.books[existingIndex] = { ...this.books[existingIndex], ...bookEntry };
+                } else {
+                    // Add new book
+                    this.books.push(bookEntry);
+                }
+                
+                this.saveToStorage();
+            }
+
+            removeBook(bookId) {
+                if (!Array.isArray(this.books)) {
+                    this.books = [];
+                    return;
+                }
+                this.books = this.books.filter(b => b.id !== bookId);
+                this.saveToStorage();
+            }
+
+            getBook(bookId) {
+                if (!Array.isArray(this.books)) {
+                    this.books = [];
+                    return null;
+                }
+                return this.books.find(b => b.id === bookId);
+            }
+
+            updateProgress(bookId, progress) {
+                const book = this.getBook(bookId);
+                if (book) {
+                    book.progress = progress;
+                    book.lastRead = new Date().toISOString();
+                    this.saveToStorage();
+                }
+            }
+
+            // Cache a book's file data (removes file data from other books)
+            cacheBookData(bookId, fileData) {
+                if (!Array.isArray(this.books)) {
+                    this.books = [];
+                    return;
+                }
+                
+                // Remove fileData from all books
+                this.books.forEach(book => {
+                    if (book.id !== bookId) {
+                        delete book.fileData;
+                        book.isCached = false;
+                    }
+                });
+                
+                // Add fileData to the specified book
+                const book = this.getBook(bookId);
+                if (book) {
+                    book.fileData = fileData;
+                    book.isCached = true;
+                    book.lastRead = new Date().toISOString();
+                    this.saveToStorage();
+                }
+            }
+
+            getAllBooks() {
+                // Ensure books is an array
+                if (!Array.isArray(this.books)) {
+                    console.warn('Books is not an array, resetting');
+                    this.books = [];
+                    return [];
+                }
+                
+                // Sort by last read date
+                return [...this.books].sort((a, b) => 
+                    new Date(b.lastRead || b.addedDate) - new Date(a.lastRead || a.addedDate)
+                );
+            }
+        }
+
+        // SMIL Parser
+        class SMILParser {
+            constructor() {
+                this.segments = [];
+            }
+
+            async parse(smilContent) {
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(smilContent, 'text/xml');
+                
+                const parserError = xmlDoc.querySelector('parsererror');
+                if (parserError) {
+                    throw new Error('SMIL parsing error');
+                }
+
+                const segments = [];
+                const parElements = xmlDoc.querySelectorAll('par');
+                
+                parElements.forEach((par, index) => {
+                    const textElement = par.querySelector('text');
+                    const audioElement = par.querySelector('audio');
+                    
+                    if (textElement && audioElement) {
+                        segments.push({
+                            id: par.getAttribute('id') || `segment-${index}`,
+                            textSrc: textElement.getAttribute('src'),
+                            audioSrc: audioElement.getAttribute('src'),
+                            clipBegin: this.parseTime(audioElement.getAttribute('clipBegin') || '0'),
+                            clipEnd: this.parseTime(audioElement.getAttribute('clipEnd') || '0')
+                        });
+                    }
+                });
+                
+                this.segments = segments;
+                return segments;
+            }
+
+            parseTime(timeStr) {
+                if (!timeStr) return 0;
+                
+                if (timeStr.endsWith('ms')) return parseFloat(timeStr) / 1000;
+                if (timeStr.endsWith('s')) return parseFloat(timeStr);
+                
+                const parts = timeStr.split(':');
+                if (parts.length === 3) {
+                    return parseFloat(parts[0]) * 3600 + 
+                           parseFloat(parts[1]) * 60 + 
+                           parseFloat(parts[2]);
+                }
+                if (parts.length === 2) {
+                    return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+                }
+                
+                return parseFloat(timeStr) || 0;
+            }
+        }
+
+        // Media Overlay Controller
+        class MediaOverlayController {
+            constructor(onSegmentChange, onPlaybackEnd) {
+                this.audioCache = new Map();
+                this.currentAudio = null;
+                this.currentSegment = null;
+                this.allSegments = [];
+                this.currentSegmentIndex = 0;
+                this.isPlaying = false;
+                this.onSegmentChange = onSegmentChange;
+                this.onPlaybackEnd = onPlaybackEnd;
+                this.playbackRate = 1.0;
+                this.monitorInterval = null;
+            }
+
+            setSegments(segments) {
+                this.allSegments = segments;
+                this.currentSegmentIndex = 0;
+            }
+
+            async loadSegment(segment, audioBaseUrl = '', blobUrl = null) {
+                this.currentSegment = segment;
+                
+                let audioUrl = blobUrl || segment.audioSrc;
+                
+                if (this.audioCache.has(audioUrl)) {
+                    this.currentAudio = this.audioCache.get(audioUrl);
+                    this.currentAudio.currentTime = segment.clipBegin;
+                    this.currentAudio.playbackRate = this.playbackRate;
+                    return Promise.resolve();
+                }
+                
+                const audio = new Audio();
+                this.currentAudio = audio;
+                this.audioCache.set(audioUrl, audio);
+                
+                return new Promise((resolve, reject) => {
+                    const metadataHandler = () => {
+                        if (segment.clipBegin > audio.duration) {
+                            reject(new Error(`Clip begin (${segment.clipBegin}s) is beyond audio duration (${audio.duration}s)`));
+                            return;
+                        }
+                        
+                        audio.currentTime = segment.clipBegin;
+                        resolve();
+                    };
+                    
+                    const errorHandler = (e) => {
+                        const errorMessages = {
+                            1: 'MEDIA_ERR_ABORTED',
+                            2: 'MEDIA_ERR_NETWORK',
+                            3: 'MEDIA_ERR_DECODE',
+                            4: 'MEDIA_ERR_SRC_NOT_SUPPORTED'
+                        };
+                        
+                        const errorMsg = audio.error ? 
+                            errorMessages[audio.error.code] || audio.error.message :
+                            'Unknown error';
+                        
+                        reject(new Error(`Audio error: ${errorMsg}`));
+                    };
+                    
+                    audio.addEventListener('loadedmetadata', metadataHandler, { once: true });
+                    audio.addEventListener('error', errorHandler, { once: true });
+                    
+                    audio.src = audioUrl;
+                    audio.playbackRate = this.playbackRate;
+                    audio.load();
+                });
+            }
+
+            play() {
+                if (!this.currentSegment || !this.currentAudio) return;
+                this.isPlaying = true;
+                
+                const playPromise = this.currentAudio.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch(error => {
+                        console.error('Play error:', error);
+                        this.isPlaying = false;
+                    });
+                }
+                
+                this.startMonitoring();
+            }
+
+            pause() {
+                this.isPlaying = false;
+                if (this.currentAudio) {
+                    this.currentAudio.pause();
+                }
+                this.stopMonitoring();
+            }
+
+            stop() {
+                this.pause();
+                if (this.currentAudio) {
+                    this.currentAudio.currentTime = 0;
+                }
+            }
+
+            setPlaybackRate(rate) {
+                this.playbackRate = rate;
+                if (this.currentAudio) {
+                    this.currentAudio.playbackRate = rate;
+                }
+                for (const audio of this.audioCache.values()) {
+                    audio.playbackRate = rate;
+                }
+            }
+
+            startMonitoring() {
+                this.stopMonitoring();
+                this.monitorInterval = setInterval(() => {
+                    if (!this.isPlaying || !this.currentSegment || !this.currentAudio) return;
+                    
+                    const currentTime = this.currentAudio.currentTime;
+                    
+                    if (currentTime >= this.currentSegment.clipEnd) {
+                        const nextSegmentIndex = this.currentSegmentIndex + 1;
+                        if (nextSegmentIndex < this.allSegments.length) {
+                            const nextSegment = this.allSegments[nextSegmentIndex];
+                            
+                            if (nextSegment.audioSrc === this.currentSegment.audioSrc) {
+                                this.currentSegment = nextSegment;
+                                this.currentSegmentIndex = nextSegmentIndex;
+                                if (this.onSegmentChange) {
+                                    this.onSegmentChange(nextSegment);
+                                }
+                                return;
+                            }
+                        }
+                        
+                        this.pause();
+                        if (this.onPlaybackEnd) {
+                            this.onPlaybackEnd();
+                        }
+                    }
+                }, 50);
+            }
+
+            stopMonitoring() {
+                if (this.monitorInterval) {
+                    clearInterval(this.monitorInterval);
+                    this.monitorInterval = null;
+                }
+            }
+
+            handleError(error) {
+                console.error('Audio error:', error);
+                this.isPlaying = false;
+                this.stopMonitoring();
+            }
+
+            getCurrentTime() {
+                return this.currentAudio ? this.currentAudio.currentTime : 0;
+            }
+
+            getDuration() {
+                return this.currentSegment ? 
+                    this.currentSegment.clipEnd - this.currentSegment.clipBegin : 0;
+            }
+
+            clearCache() {
+                for (const audio of this.audioCache.values()) {
+                    audio.pause();
+                    audio.src = '';
+                }
+                this.audioCache.clear();
+                this.currentAudio = null;
+            }
+        }
+
+        // Main Application
+        class EPUBMediaOverlayApp {
+            constructor() {
+                console.log('Initializing EPUB Reader App');
+                this.libraryManager = new LibraryManager();
+                this.book = null;
+                this.currentBookId = null;
+                this.parser = new SMILParser();
+                this.controller = null;
+                this.segments = [];
+                this.currentSegmentIndex = 0;
+                this.isPlaying = false;
+                this.currentChapter = null;
+                this.overlayChapters = [];
+                this.debugInfo = [];
+                this.audioBlobUrls = new Map();
+                this.isFullscreen = false;
+                this.isDarkMode = false;
+                this.wakeLock = null;
+                this.isWakeLockEnabled = false;
+                this.bookMetadata = {
+                    title: 'EPUB Book',
+                    author: 'Unknown Author',
+                    coverImage: null
+                };
+                
+                this.initController();
+                this.initUI();
+                this.bindEvents();
+                this.initMediaSession();
+                this.renderLibrary();
+                console.log('App initialized successfully');
+            }
+
+            initMediaSession() {
+                if ('mediaSession' in navigator) {
+                    console.log('Media Session API available');
+                } else {
+                    console.log('Media Session API not available');
+                }
+                
+                if ('wakeLock' in navigator) {
+                    console.log('Screen Wake Lock API available');
+                } else {
+                    console.log('Screen Wake Lock API not available');
+                    // Hide wake lock button if not supported
+                    if (this.elements.wakeLockBtn) {
+                        this.elements.wakeLockBtn.style.display = 'none';
+                    }
+                }
+            }
+
+            async requestWakeLock() {
+                try {
+                    if ('wakeLock' in navigator) {
+                        this.wakeLock = await navigator.wakeLock.request('screen');
+                        console.log('✓ Screen wake lock acquired successfully');
+                        
+                        this.wakeLock.addEventListener('release', () => {
+                            console.log('Screen wake lock released');
+                            this.wakeLock = null;
+                            if (this.isWakeLockEnabled) {
+                                // Update button state if it was released externally
+                                this.updateWakeLockButton();
+                            }
+                        });
+                    }
+                } catch (err) {
+                    console.error('Wake lock request failed:', err.name, err.message);
+                    if (err.name === 'NotAllowedError') {
+                        this.showNotification('Wake lock denied - may need user interaction', 'error');
+                    }
+                }
+            }
+
+            releaseWakeLock() {
+                if (this.wakeLock !== null) {
+                    this.wakeLock.release()
+                        .then(() => {
+                            this.wakeLock = null;
+                            console.log('Screen wake lock manually released');
+                        })
+                        .catch(err => {
+                            console.error('Wake lock release failed:', err);
+                        });
+                }
+            }
+
+            async toggleWakeLock() {
+                this.isWakeLockEnabled = !this.isWakeLockEnabled;
+                
+                const eyeOpenSVG = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                </svg>`;
+                
+                const eyeSlashSVG = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
+                </svg>`;
+                
+                if (this.isWakeLockEnabled) {
+                    // Enable wake lock
+                    await this.requestWakeLock();
+                    this.elements.wakeLockBtn.classList.add('active');
+                    this.elements.wakeLockBtn.innerHTML = eyeOpenSVG;
+                    this.elements.wakeLockBtn.title = 'Screen Staying Awake (Click to Disable)';
+                    this.showNotification('Screen wake lock enabled', 'success');
+                } else {
+                    // Disable wake lock
+                    this.releaseWakeLock();
+                    this.elements.wakeLockBtn.classList.remove('active');
+                    this.elements.wakeLockBtn.innerHTML = eyeSlashSVG;
+                    this.elements.wakeLockBtn.title = 'Keep Screen Awake (Click to Enable)';
+                    this.showNotification('Screen wake lock disabled', 'info');
+                }
+            }
+
+            updateWakeLockButton() {
+                const eyeOpenSVG = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                </svg>`;
+                
+                const eyeSlashSVG = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
+                </svg>`;
+                
+                if (this.wakeLock) {
+                    this.elements.wakeLockBtn.classList.add('active');
+                    this.elements.wakeLockBtn.innerHTML = eyeOpenSVG;
+                    this.elements.wakeLockBtn.title = 'Screen Staying Awake (Click to Disable)';
+                } else {
+                    this.elements.wakeLockBtn.classList.remove('active');
+                    this.elements.wakeLockBtn.innerHTML = eyeSlashSVG;
+                    this.elements.wakeLockBtn.title = 'Keep Screen Awake (Click to Enable)';
+                }
+            }
+
+            initController() {
+                this.controller = new MediaOverlayController(
+                    (segment) => {
+                        this.currentSegmentIndex = this.segments.findIndex(s => s === segment);
+                        this.clearHighlight();
+                        this.highlightSegment(segment);
+                        this.saveProgress();
+                    },
+                    () => this.handleNext()
+                );
+            }
+
+            initUI() {
+                this.elements = {
+                    libraryView: document.getElementById('libraryView'),
+                    readerView: document.getElementById('readerView'),
+                    libraryGrid: document.getElementById('libraryGrid'),
+                    emptyLibrary: document.getElementById('emptyLibrary'),
+                    libraryStats: document.getElementById('libraryStats'),
+                    libraryEpubInput: document.getElementById('libraryEpubInput'),
+                    addFromCloudBtn: document.getElementById('addFromCloudBtn'),
+                    backToLibraryBtn: document.getElementById('backToLibraryBtn'),
+                    viewer: document.getElementById('viewer'),
+                    readerArea: document.getElementById('readerArea'),
+                    playBtn: document.getElementById('playBtn'),
+                    prevBtn: document.getElementById('prevBtn'),
+                    nextBtn: document.getElementById('nextBtn'),
+                    chaptersBtn: document.getElementById('chaptersBtn'),
+                    speedSlider: document.getElementById('speedSlider'),
+                    speedDisplay: document.getElementById('speedDisplay'),
+                    statusBar: document.getElementById('statusBar'),
+                    bookTitle: document.getElementById('bookTitle'),
+                    bookAuthor: document.getElementById('bookAuthor'),
+                    bookChapter: document.getElementById('bookChapter'),
+                    bookCover: document.getElementById('bookCover'),
+                    bookCoverImage: document.getElementById('bookCoverImage'),
+                    debugPanel: document.getElementById('debugPanel'),
+                    debugContent: document.getElementById('debugContent'),
+                    wakeLockBtn: document.getElementById('wakeLockBtn'),
+                    fullscreenBtn: document.getElementById('fullscreenBtn'),
+                    darkModeBtn: document.getElementById('darkModeBtn')
+                };
+            }
+
+            bindEvents() {
+                this.elements.libraryEpubInput.addEventListener('change', (e) => this.loadEPUBToLibrary(e));
+                this.elements.addFromCloudBtn.addEventListener('click', () => this.showCloudImportModal());
+                this.elements.backToLibraryBtn.addEventListener('click', () => this.showLibrary());
+                this.elements.playBtn.addEventListener('click', () => this.togglePlay());
+                this.elements.prevBtn.addEventListener('click', () => this.previousSegment());
+                this.elements.nextBtn.addEventListener('click', () => this.nextSegment());
+                this.elements.chaptersBtn.addEventListener('click', () => this.showAudioChapters());
+                this.elements.wakeLockBtn.addEventListener('click', () => this.toggleWakeLock());
+                this.elements.fullscreenBtn.addEventListener('click', () => this.toggleFullscreen());
+                this.elements.darkModeBtn.addEventListener('click', () => this.toggleDarkMode());
+                
+                document.querySelectorAll('.speed-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const speed = parseFloat(e.target.dataset.speed);
+                        this.setSpeed(speed);
+                        
+                        document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+                        e.target.classList.add('active');
+                    });
+                });
+                
+                document.addEventListener('keydown', (e) => this.handleKeyboard(e));
+            }
+
+            renderLibrary() {
+                const books = this.libraryManager.getAllBooks();
+                
+                this.elements.libraryStats.textContent = `${books.length} book${books.length !== 1 ? 's' : ''}`;
+                
+                if (books.length === 0) {
+                    this.elements.emptyLibrary.style.display = 'block';
+                    this.elements.libraryGrid.innerHTML = '';
+                } else {
+                    this.elements.emptyLibrary.style.display = 'none';
+                    
+                    this.elements.libraryGrid.innerHTML = books.map(book => `
+                        <div class="book-card" data-book-id="${book.id}">
+                            <div class="book-card-cover">
+                                ${book.coverImage ? 
+                                    `<img src="${book.coverImage}" alt="${book.title}" />` : 
+                                    '📖'
+                                }
+                                ${book.source === 'cloud' ? 
+                                    `<div class="cloud-icon-badge">☁️ Cloud</div>` : 
+                                    ''
+                                }
+                                ${book.isCached ? 
+                                    `<div style="position: absolute; top: 0.5rem; left: 0.5rem; background: rgba(16, 185, 129, 0.9); color: white; padding: 0.25rem 0.5rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 600;">Cached</div>` : 
+                                    book.source === 'cloud' ? 
+                                        `<div style="position: absolute; top: 0.5rem; left: 0.5rem; background: rgba(0, 0, 0, 0.7); color: white; padding: 0.25rem 0.5rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 600;">☁️ Auto-download</div>` :
+                                        `<div style="position: absolute; top: 0.5rem; left: 0.5rem; background: rgba(0, 0, 0, 0.7); color: white; padding: 0.25rem 0.5rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 600;">📁 Re-upload needed</div>`
+                                }
+                                <div class="book-card-progress">
+                                    <div class="book-card-progress-bar" style="width: ${book.progress?.percentage || 0}%"></div>
+                                </div>
+                            </div>
+                            <div class="book-card-info">
+                                <div class="book-card-title">${book.title}</div>
+                                <div class="book-card-author">${book.author}</div>
+                                <div class="book-card-meta">
+                                    <span>${book.progress?.percentage || 0}%</span>
+                                    ${book.lastRead ? 
+                                        `<span>${this.formatLastRead(book.lastRead)}</span>` : 
+                                        `<span>Not started</span>`
+                                    }
+                                </div>
+                            </div>
+                            <div class="book-card-actions">
+                                <button class="book-card-action-btn" data-action="remove" data-book-id="${book.id}" title="Remove from library">
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+                    `).join('');
+                    
+                    // Add event listeners to book cards
+                    this.elements.libraryGrid.querySelectorAll('.book-card').forEach(card => {
+                        card.addEventListener('click', (e) => {
+                            // Don't open book if clicking on action button
+                            if (e.target.closest('.book-card-action-btn')) {
+                                const bookId = e.target.dataset.bookId;
+                                this.removeBookFromLibrary(bookId);
+                                return;
+                            }
+                            
+                            const bookId = card.dataset.bookId;
+                            this.openBookFromLibrary(bookId);
+                        });
+                    });
+                }
+            }
+
+            formatLastRead(dateString) {
+                const date = new Date(dateString);
+                const now = new Date();
+                const diffMs = now - date;
+                const diffMins = Math.floor(diffMs / 60000);
+                const diffHours = Math.floor(diffMs / 3600000);
+                const diffDays = Math.floor(diffMs / 86400000);
+                
+                if (diffMins < 60) return 'Just now';
+                if (diffHours < 24) return `${diffHours}h ago`;
+                if (diffDays < 7) return `${diffDays}d ago`;
+                return date.toLocaleDateString();
+            }
+
+            showLibrary() {
+                // Save current progress before leaving
+                if (this.currentBookId) {
+                    this.saveProgress();
+                }
+                
+                // Stop playback
+                if (this.isPlaying) {
+                    this.controller.pause();
+                    this.isPlaying = false;
+                }
+                
+                this.elements.libraryView.classList.add('active');
+                this.elements.readerView.classList.remove('active');
+                this.renderLibrary();
+            }
+
+            showReader() {
+                this.elements.libraryView.classList.remove('active');
+                this.elements.readerView.classList.add('active');
+            }
+
+            async loadEPUBToLibrary(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                this.showNotification('Adding book to library...', 'info');
+
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const book = ePub(arrayBuffer);
+                    await book.ready;
+                    
+                    // Extract metadata
+                    await book.loaded.metadata;
+                    const title = book.packaging.metadata.title || file.name;
+                    const author = book.packaging.metadata.creator || 'Unknown Author';
+                    
+                    // Generate unique ID
+                    const bookId = this.generateBookId(title, author);
+                    
+                    // Try to extract and compress cover
+                    let coverImage = null;
+                    try {
+                        await book.loaded.cover;
+                        await book.loaded.resources;
+                        
+                        if (book.cover) {
+                            const coverUrl = await book.cover;
+                            if (coverUrl) {
+                                const coverPath = book.resources.replacements[coverUrl] || coverUrl;
+                                const archiveFiles = Object.keys(book.archive.zip.files);
+                                
+                                let actualCoverPath = null;
+                                if (book.archive.zip.files[coverPath]) {
+                                    actualCoverPath = coverPath;
+                                } else {
+                                    const coverFilename = coverPath.split('/').pop();
+                                    actualCoverPath = archiveFiles.find(f => f.endsWith(coverFilename));
+                                }
+                                
+                                if (actualCoverPath) {
+                                    const coverFile = book.archive.zip.files[actualCoverPath];
+                                    const coverData = await coverFile.async('arraybuffer');
+                                    
+                                    const extension = actualCoverPath.split('.').pop().toLowerCase();
+                                    const mimeTypes = {
+                                        'jpg': 'image/jpeg',
+                                        'jpeg': 'image/jpeg',
+                                        'png': 'image/png',
+                                        'gif': 'image/gif',
+                                        'webp': 'image/webp'
+                                    };
+                                    const mimeType = mimeTypes[extension] || 'image/jpeg';
+                                    
+                                    const blob = new Blob([coverData], { type: mimeType });
+                                    
+                                    // Compress the cover image to reduce storage
+                                    try {
+                                        coverImage = await this.compressImage(blob, 300, 400, 0.7);
+                                    } catch (compressionError) {
+                                        console.log('Image compression failed, using original:', compressionError);
+                                        coverImage = await this.blobToBase64(blob);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.log('Could not extract cover:', e);
+                    }
+                    
+                    // Store book metadata only (no file data)
+                    const bookData = {
+                        id: bookId,
+                        title: title,
+                        author: author,
+                        coverImage: coverImage,
+                        addedDate: new Date().toISOString(),
+                        lastRead: null,
+                        progress: {
+                            chapterIndex: 0,
+                            segmentIndex: 0,
+                            percentage: 0
+                        }
+                        // Note: NOT storing fileData here
+                    };
+                    
+                    try {
+                        this.libraryManager.addBook(bookData, false); // false = don't cache file data
+                        this.renderLibrary();
+                        this.showNotification('Book added to library!', 'success');
+                    } catch (storageError) {
+                        if (storageError.name === 'QuotaExceededError') {
+                            // Try without cover image
+                            bookData.coverImage = null;
+                            this.libraryManager.addBook(bookData, false);
+                            this.renderLibrary();
+                            this.showNotification('Book added (without cover due to storage limit)', 'info');
+                        } else {
+                            throw storageError;
+                        }
+                    }
+                    
+                    // Reset input
+                    e.target.value = '';
+                    
+                } catch (error) {
+                    console.error('Error adding book:', error);
+                    this.showNotification('Error adding book to library', 'error');
+                }
+            }
+
+            generateBookId(title, author) {
+                const str = `${title}-${author}-${Date.now()}`;
+                let hash = 0;
+                for (let i = 0; i < str.length; i++) {
+                    const char = str.charCodeAt(i);
+                    hash = ((hash << 5) - hash) + char;
+                    hash = hash & hash;
+                }
+                return 'book-' + Math.abs(hash).toString(36);
+            }
+
+            async blobToBase64(blob) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+            }
+
+            async compressImage(blob, maxWidth = 300, maxHeight = 400, quality = 0.7) {
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    img.onload = () => {
+                        // Calculate new dimensions while maintaining aspect ratio
+                        let width = img.width;
+                        let height = img.height;
+                        
+                        if (width > maxWidth || height > maxHeight) {
+                            const ratio = Math.min(maxWidth / width, maxHeight / height);
+                            width = width * ratio;
+                            height = height * ratio;
+                        }
+                        
+                        canvas.width = width;
+                        canvas.height = height;
+                        
+                        // Draw and compress
+                        ctx.drawImage(img, 0, 0, width, height);
+                        
+                        canvas.toBlob((compressedBlob) => {
+                            if (compressedBlob) {
+                                this.blobToBase64(compressedBlob).then(resolve).catch(reject);
+                            } else {
+                                reject(new Error('Image compression failed'));
+                            }
+                        }, 'image/jpeg', quality);
+                    };
+                    
+                    img.onerror = reject;
+                    img.src = URL.createObjectURL(blob);
+                });
+            }
+
+            removeBookFromLibrary(bookId) {
+                if (confirm('Are you sure you want to remove this book from your library?')) {
+                    this.libraryManager.removeBook(bookId);
+                    this.renderLibrary();
+                    this.showNotification('Book removed from library', 'info');
+                }
+            }
+
+            showCloudImportModal() {
+                const modal = document.createElement('div');
+                modal.className = 'cloud-modal';
+                
+                modal.innerHTML = `
+                    <div class="cloud-modal-content">
+                        <h2 class="cloud-modal-title">
+                            <span>☁️</span>
+                            <span>Import from Cloud</span>
+                        </h2>
+                        <p class="cloud-modal-description">
+                            Enter a direct download link to your EPUB file from Dropbox, Google Drive, or any cloud storage.
+                        </p>
+                        
+                        <div class="cloud-help">
+                            <div class="cloud-help-title">How to get a direct link:</div>
+                            <strong>Dropbox:</strong> Share link and change ?dl=0 to ?dl=1<br>
+                            <strong>Google Drive:</strong> Use: https://drive.google.com/uc?export=download&id=FILE_ID<br>
+                            <small style="display: block; margin-top: 0.5rem; opacity: 0.8;">
+                                ℹ️ Uses CORS proxy (corsproxy.io) to bypass browser restrictions
+                            </small>
+                        </div>
+                        
+                        <input 
+                            type="url" 
+                            class="cloud-modal-input" 
+                            id="cloudUrlInput" 
+                            placeholder="https://example.com/book.epub"
+                            autocomplete="off"
+                        />
+                        
+                        <div class="cloud-modal-buttons">
+                            <button class="cloud-modal-btn cloud-modal-btn-secondary" id="cloudCancelBtn">
+                                Cancel
+                            </button>
+                            <button class="cloud-modal-btn cloud-modal-btn-primary" id="cloudImportBtn">
+                                Import Book
+                            </button>
+                        </div>
+                    </div>
+                `;
+                
+                document.body.appendChild(modal);
+                
+                const input = modal.querySelector('#cloudUrlInput');
+                const cancelBtn = modal.querySelector('#cloudCancelBtn');
+                const importBtn = modal.querySelector('#cloudImportBtn');
+                
+                // Focus input
+                setTimeout(() => input.focus(), 100);
+                
+                // Handle cancel
+                cancelBtn.addEventListener('click', () => modal.remove());
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) modal.remove();
+                });
+                
+                // Handle import
+                importBtn.addEventListener('click', async () => {
+                    const url = input.value.trim();
+                    if (!url) {
+                        this.showNotification('Please enter a URL', 'error');
+                        return;
+                    }
+                    
+                    // Validate URL
+                    try {
+                        new URL(url);
+                    } catch (e) {
+                        this.showNotification('Please enter a valid URL', 'error');
+                        return;
+                    }
+                    
+                    importBtn.disabled = true;
+                    importBtn.textContent = 'Importing...';
+                    
+                    modal.remove();
+                    await this.downloadFromCloud(url);
+                });
+                
+                // Handle enter key
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        importBtn.click();
+                    }
+                });
+                
+                // Escape to close
+                const escapeHandler = (e) => {
+                    if (e.key === 'Escape') {
+                        modal.remove();
+                        document.removeEventListener('keydown', escapeHandler);
+                    }
+                };
+                document.addEventListener('keydown', escapeHandler);
+            }
+
+            async downloadFromCloud(url) {
+                this.showNotification('Downloading book from cloud...', 'info');
+                
+                try {
+                    // Use CORS proxy for cloud downloads
+                    const corsProxy = 'https://corsproxy.io/?';
+                    const proxiedUrl = corsProxy + encodeURIComponent(url);
+                    
+                    const response = await fetch(proxiedUrl);
+                    
+                    if (!response.ok) {
+                        throw new Error(`Download failed: ${response.status} ${response.statusText}`);
+                    }
+                    
+                    const arrayBuffer = await response.arrayBuffer();
+                    
+                    if (arrayBuffer.byteLength === 0) {
+                        throw new Error('Downloaded file is empty');
+                    }
+                    
+                    // Try to parse as EPUB
+                    const book = ePub(arrayBuffer);
+                    await book.ready;
+                    
+                    // Extract metadata
+                    await book.loaded.metadata;
+                    const title = book.packaging.metadata.title || 'Unknown Title';
+                    const author = book.packaging.metadata.creator || 'Unknown Author';
+                    
+                    // Generate unique ID
+                    const bookId = this.generateBookId(title, author);
+                    
+                    // Try to extract and compress cover
+                    let coverImage = null;
+                    try {
+                        await book.loaded.cover;
+                        await book.loaded.resources;
+                        
+                        if (book.cover) {
+                            const coverUrl = await book.cover;
+                            if (coverUrl) {
+                                const coverPath = book.resources.replacements[coverUrl] || coverUrl;
+                                const archiveFiles = Object.keys(book.archive.zip.files);
+                                
+                                let actualCoverPath = null;
+                                if (book.archive.zip.files[coverPath]) {
+                                    actualCoverPath = coverPath;
+                                } else {
+                                    const coverFilename = coverPath.split('/').pop();
+                                    actualCoverPath = archiveFiles.find(f => f.endsWith(coverFilename));
+                                }
+                                
+                                if (actualCoverPath) {
+                                    const coverFile = book.archive.zip.files[actualCoverPath];
+                                    const coverData = await coverFile.async('arraybuffer');
+                                    
+                                    const extension = actualCoverPath.split('.').pop().toLowerCase();
+                                    const mimeTypes = {
+                                        'jpg': 'image/jpeg',
+                                        'jpeg': 'image/jpeg',
+                                        'png': 'image/png',
+                                        'gif': 'image/gif',
+                                        'webp': 'image/webp'
+                                    };
+                                    const mimeType = mimeTypes[extension] || 'image/jpeg';
+                                    
+                                    const blob = new Blob([coverData], { type: mimeType });
+                                    
+                                    // Compress the cover image
+                                    try {
+                                        coverImage = await this.compressImage(blob, 300, 400, 0.7);
+                                    } catch (compressionError) {
+                                        console.log('Image compression failed, using original:', compressionError);
+                                        coverImage = await this.blobToBase64(blob);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.log('Could not extract cover:', e);
+                    }
+                    
+                    // Store book metadata with cloud info
+                    const bookData = {
+                        id: bookId,
+                        title: title,
+                        author: author,
+                        coverImage: coverImage,
+                        addedDate: new Date().toISOString(),
+                        lastRead: null,
+                        progress: {
+                            chapterIndex: 0,
+                            segmentIndex: 0,
+                            percentage: 0
+                        },
+                        source: 'cloud',
+                        cloudUrl: url
+                    };
+                    
+                    try {
+                        this.libraryManager.addBook(bookData, false);
+                        this.renderLibrary();
+                        this.showNotification('Book imported from cloud successfully!', 'success');
+                    } catch (storageError) {
+                        if (storageError.name === 'QuotaExceededError') {
+                            // Try without cover image
+                            bookData.coverImage = null;
+                            this.libraryManager.addBook(bookData, false);
+                            this.renderLibrary();
+                            this.showNotification('Book imported (without cover due to storage limit)', 'info');
+                        } else {
+                            throw storageError;
+                        }
+                    }
+                    
+                } catch (error) {
+                    console.error('Error downloading from cloud:', error);
+                    this.showNotification('Failed to import book: ' + error.message, 'error');
+                }
+            }
+
+            showBookLoading(bookId, message = 'Loading...') {
+                const bookCard = document.querySelector(`[data-book-id="${bookId}"]`);
+                if (!bookCard) return;
+                
+                const cover = bookCard.querySelector('.book-card-cover');
+                if (!cover) return;
+                
+                // Remove existing overlay if any
+                const existingOverlay = cover.querySelector('.book-loading-overlay');
+                if (existingOverlay) {
+                    existingOverlay.remove();
+                }
+                
+                // Create loading overlay
+                const overlay = document.createElement('div');
+                overlay.className = 'book-loading-overlay';
+                overlay.innerHTML = `
+                    <div class="book-loading-spinner"></div>
+                    <div class="book-loading-text">${message}</div>
+                `;
+                
+                cover.appendChild(overlay);
+            }
+
+            hideBookLoading(bookId) {
+                const bookCard = document.querySelector(`[data-book-id="${bookId}"]`);
+                if (!bookCard) return;
+                
+                const overlay = bookCard.querySelector('.book-loading-overlay');
+                if (overlay) {
+                    overlay.remove();
+                }
+            }
+
+            async openBookFromLibrary(bookId) {
+                const bookData = this.libraryManager.getBook(bookId);
+                if (!bookData) {
+                    this.showNotification('Book not found', 'error');
+                    return;
+                }
+
+                // Check if book file data is cached
+                if (!bookData.fileData) {
+                    // Check if it's a cloud book
+                    if (bookData.source === 'cloud' && bookData.cloudUrl) {
+                        // Show loading spinner
+                        this.showBookLoading(bookId, 'Downloading...');
+                        
+                        // Automatically download from cloud
+                        this.showNotification('Downloading book from cloud...', 'info');
+                        
+                        try {
+                            // Use CORS proxy
+                            const corsProxy = 'https://corsproxy.io/?';
+                            const proxiedUrl = corsProxy + encodeURIComponent(bookData.cloudUrl);
+                            
+                            const response = await fetch(proxiedUrl);
+                            
+                            if (!response.ok) {
+                                throw new Error(`Download failed: ${response.status}`);
+                            }
+                            
+                            const arrayBuffer = await response.arrayBuffer();
+                            
+                            // Hide loading spinner
+                            this.hideBookLoading(bookId);
+                            
+                            // Cache this book's file data
+                            this.libraryManager.cacheBookData(bookId, arrayBuffer);
+                            
+                            // Now open the book
+                            await this.openBookWithData(bookId, arrayBuffer);
+                            
+                        } catch (error) {
+                            // Hide loading spinner
+                            this.hideBookLoading(bookId);
+                            
+                            console.error('Error downloading from cloud:', error);
+                            this.showNotification('Failed to download book from cloud: ' + error.message, 'error');
+                        }
+                        
+                        return;
+                    }
+                    
+                    // Local book needs to be re-uploaded
+                    this.showNotification('Please re-upload this book to continue reading', 'info');
+                    
+                    // Show file picker for this specific book
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = '.epub';
+                    input.onchange = async (e) => {
+                        const file = e.target.files[0];
+                        if (!file) return;
+                        
+                        // Show loading spinner
+                        this.showBookLoading(bookId, 'Loading...');
+                        
+                        try {
+                            const arrayBuffer = await file.arrayBuffer();
+                            
+                            // Hide loading spinner
+                            this.hideBookLoading(bookId);
+                            
+                            // Cache this book's file data (will remove from other books)
+                            this.libraryManager.cacheBookData(bookId, arrayBuffer);
+                            
+                            // Now open the book
+                            await this.openBookWithData(bookId, arrayBuffer);
+                        } catch (error) {
+                            // Hide loading spinner
+                            this.hideBookLoading(bookId);
+                            
+                            console.error('Error loading book:', error);
+                            this.showNotification('Error loading book file', 'error');
+                        }
+                    };
+                    input.click();
+                    return;
+                }
+
+                // Book is cached, show loading while opening
+                this.showBookLoading(bookId, 'Opening...');
+                
+                try {
+                    await this.openBookWithData(bookId, bookData.fileData);
+                    // Loading spinner will be hidden when library view is hidden
+                } catch (error) {
+                    this.hideBookLoading(bookId);
+                    throw error;
+                }
+            }
+
+            async openBookWithData(bookId, fileData) {
+                const bookData = this.libraryManager.getBook(bookId);
+                if (!bookData) {
+                    this.showNotification('Book not found', 'error');
+                    return;
+                }
+
+                this.currentBookId = bookId;
+                this.showReader();
+                this.showNotification('Opening book...', 'info');
+
+                try {
+                    this.book = ePub(fileData);
+                    await this.book.ready;
+                    
+                    this.bookMetadata = {
+                        title: bookData.title,
+                        author: bookData.author,
+                        coverImage: bookData.coverImage
+                    };
+                    
+                    this.elements.bookTitle.textContent = bookData.title;
+                    this.elements.bookAuthor.textContent = bookData.author;
+                    
+                    if (bookData.coverImage) {
+                        this.elements.bookCoverImage.src = bookData.coverImage;
+                        this.elements.bookCover.style.display = 'block';
+                    }
+                    
+                    await this.checkMediaOverlays();
+                    
+                    // Resume from saved position
+                    if (bookData.progress && bookData.progress.chapterIndex !== undefined) {
+                        const chapterIndex = bookData.progress.chapterIndex;
+                        if (this.overlayChapters[chapterIndex]) {
+                            await this.loadChapterOverlay(this.overlayChapters[chapterIndex]);
+                            this.currentSegmentIndex = bookData.progress.segmentIndex || 0;
+                        }
+                    }
+                    
+                } catch (error) {
+                    console.error('Error opening book:', error);
+                    this.showNotification('Error opening book: ' + error.message, 'error');
+                }
+            }
+
+            saveProgress() {
+                if (!this.currentBookId || !this.currentChapter) return;
+                
+                const chapterIndex = this.overlayChapters.findIndex(ch => ch.href === this.currentChapter.href);
+                const totalChapters = this.overlayChapters.length;
+                const totalSegments = this.segments.length;
+                
+                // Calculate percentage
+                let percentage = 0;
+                if (totalChapters > 0) {
+                    const chapterProgress = chapterIndex / totalChapters;
+                    const segmentProgress = totalSegments > 0 ? this.currentSegmentIndex / totalSegments : 0;
+                    percentage = Math.round((chapterProgress + (segmentProgress / totalChapters)) * 100);
+                }
+                
+                const progress = {
+                    chapterIndex: chapterIndex,
+                    segmentIndex: this.currentSegmentIndex,
+                    percentage: Math.min(percentage, 100)
+                };
+                
+                this.libraryManager.updateProgress(this.currentBookId, progress);
+            }
+
+            toggleFullscreen() {
+                this.isFullscreen = !this.isFullscreen;
+                
+                if (this.isFullscreen) {
+                    this.elements.readerArea.classList.add('fullscreen');
+                    this.elements.fullscreenBtn.textContent = '⛶';
+                    this.elements.fullscreenBtn.title = 'Exit Fullscreen';
+                } else {
+                    this.elements.readerArea.classList.remove('fullscreen');
+                    this.elements.fullscreenBtn.textContent = '⛶';
+                    this.elements.fullscreenBtn.title = 'Toggle Fullscreen';
+                }
+            }
+
+            toggleDarkMode() {
+                this.isDarkMode = !this.isDarkMode;
+                
+                if (this.isDarkMode) {
+                    this.elements.readerArea.classList.add('dark-mode');
+                    this.elements.darkModeBtn.textContent = '☀︎';
+                    this.elements.darkModeBtn.title = 'Toggle Light Mode';
+                } else {
+                    this.elements.readerArea.classList.remove('dark-mode');
+                    this.elements.darkModeBtn.textContent = '☾';
+                    this.elements.darkModeBtn.title = 'Toggle Dark Mode';
+                }
+            }
+
+            addDebugInfo(info) {
+                this.debugInfo.push(info);
+                console.log('DEBUG:', info);
+                if (this.elements.debugContent) {
+                    this.updateDebugPanel();
+                }
+            }
+
+            updateDebugPanel() {
+                if (this.elements.debugContent) {
+                    this.elements.debugContent.innerHTML = this.debugInfo
+                        .map(info => `<div class="debug-item">${info}</div>`)
+                        .join('');
+                }
+            }
+
+            updateMediaSession() {
+                if ('mediaSession' in navigator) {
+                    const chapterTitle = this.elements.bookChapter.textContent;
+                    
+                    navigator.mediaSession.metadata = new MediaMetadata({
+                        title: this.bookMetadata.title,
+                        artist: this.bookMetadata.author,
+                        album: chapterTitle,
+                        artwork: this.bookMetadata.coverImage ? [
+                            { src: this.bookMetadata.coverImage, sizes: '512x512', type: 'image/jpeg' }
+                        ] : []
+                    });
+                    
+                    navigator.mediaSession.setActionHandler('play', () => {
+                        this.togglePlay();
+                    });
+                    
+                    navigator.mediaSession.setActionHandler('pause', () => {
+                        this.togglePlay();
+                    });
+                    
+                    navigator.mediaSession.setActionHandler('previoustrack', () => {
+                        this.previousSegment();
+                    });
+                    
+                    navigator.mediaSession.setActionHandler('nexttrack', () => {
+                        this.nextSegment();
+                    });
+                }
+            }
+
+            async loadEPUB(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                this.debugInfo = [];
+                this.showNotification('Loading EPUB...', 'info');
+
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    this.book = ePub(arrayBuffer);
+                    
+                    await this.book.ready;
+                    await this.book.loaded.metadata;
+                    
+                    const title = this.book.packaging.metadata.title || file.name;
+                    const author = this.book.packaging.metadata.creator || 'Unknown Author';
+                    
+                    this.bookMetadata.title = title;
+                    this.bookMetadata.author = author;
+                    
+                    this.elements.bookTitle.textContent = title;
+                    this.elements.bookAuthor.textContent = author;
+                    this.elements.statusBar.style.display = 'flex';
+
+                    // Generate book ID and check if it exists in library
+                    const bookId = this.generateBookId(title, author);
+                    let existingBook = this.libraryManager.getBook(bookId);
+                    
+                    if (existingBook) {
+                        // Book exists in library, cache its file data
+                        this.currentBookId = bookId;
+                        this.libraryManager.cacheBookData(bookId, arrayBuffer);
+                    } else {
+                        // New book, add to library with cached file data
+                        this.currentBookId = bookId;
+                        
+                        // Try to extract and compress cover
+                        let coverImage = null;
+                        try {
+                            await this.book.loaded.cover;
+                            await this.book.loaded.resources;
+                            
+                            if (this.book.cover) {
+                                const coverUrl = await this.book.cover;
+                                if (coverUrl) {
+                                    const coverPath = this.book.resources.replacements[coverUrl] || coverUrl;
+                                    const archiveFiles = Object.keys(this.book.archive.zip.files);
+                                    
+                                    let actualCoverPath = null;
+                                    if (this.book.archive.zip.files[coverPath]) {
+                                        actualCoverPath = coverPath;
+                                    } else {
+                                        const coverFilename = coverPath.split('/').pop();
+                                        actualCoverPath = archiveFiles.find(f => f.endsWith(coverFilename));
+                                    }
+                                    
+                                    if (actualCoverPath) {
+                                        const coverFile = this.book.archive.zip.files[actualCoverPath];
+                                        const coverData = await coverFile.async('arraybuffer');
+                                        
+                                        const extension = actualCoverPath.split('.').pop().toLowerCase();
+                                        const mimeTypes = {
+                                            'jpg': 'image/jpeg',
+                                            'jpeg': 'image/jpeg',
+                                            'png': 'image/png',
+                                            'gif': 'image/gif',
+                                            'webp': 'image/webp'
+                                        };
+                                        const mimeType = mimeTypes[extension] || 'image/jpeg';
+                                        
+                                        const blob = new Blob([coverData], { type: mimeType });
+                                        
+                                        // Compress the cover image
+                                        try {
+                                            coverImage = await this.compressImage(blob, 300, 400, 0.7);
+                                        } catch (compressionError) {
+                                            console.log('Image compression failed, using original:', compressionError);
+                                            coverImage = await this.blobToBase64(blob);
+                                        }
+                                        
+                                        this.bookMetadata.coverImage = coverImage;
+                                        
+                                        if (coverImage) {
+                                            this.elements.bookCoverImage.src = coverImage;
+                                            this.elements.bookCover.style.display = 'block';
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            console.log('Could not extract cover:', e);
+                        }
+                        
+                        const bookData = {
+                            id: bookId,
+                            title: title,
+                            author: author,
+                            coverImage: coverImage,
+                            addedDate: new Date().toISOString(),
+                            lastRead: new Date().toISOString(),
+                            progress: {
+                                chapterIndex: 0,
+                                segmentIndex: 0,
+                                percentage: 0
+                            },
+                            fileData: arrayBuffer
+                        };
+                        
+                        try {
+                            this.libraryManager.addBook(bookData, true); // true = cache file data
+                        } catch (storageError) {
+                            if (storageError.name === 'QuotaExceededError') {
+                                // Try without cover image
+                                bookData.coverImage = null;
+                                this.libraryManager.addBook(bookData, true);
+                                this.showNotification('Book cached (without cover due to storage limit)', 'info');
+                            } else {
+                                throw storageError;
+                            }
+                        }
+                    }
+
+                    await this.checkMediaOverlays();
+
+                } catch (error) {
+                    console.error('Error loading EPUB:', error);
+                    this.showNotification('Error loading EPUB: ' + error.message, 'error');
+                }
+            }
+
+            async checkMediaOverlays() {
+                try {
+                    await this.book.loaded.spine;
+                    await this.book.loaded.metadata;
+                    await this.book.loaded.manifest;
+                    
+                    this.overlayChapters = [];
+                    
+                    this.book.spine.items.forEach((item, index) => {
+                        const manifestItem = this.book.packaging.manifest[item.idref || item.id];
+                        if (manifestItem && manifestItem['media-overlay']) {
+                            item.mediaOverlay = manifestItem['media-overlay'];
+                            this.overlayChapters.push(item);
+                        }
+                    });
+
+                    const manifest = this.book.packaging.manifest;
+                    const smilFiles = [];
+                    
+                    for (const [id, item] of Object.entries(manifest)) {
+                        if (item['media-type'] === 'application/smil+xml' || 
+                            item.href.endsWith('.smil')) {
+                            smilFiles.push({ id, ...item });
+                        }
+                    }
+
+                    if (smilFiles.length > 0 && this.overlayChapters.length === 0) {
+                        for (const [id, item] of Object.entries(manifest)) {
+                            if (item['media-overlay']) {
+                                const overlayId = item['media-overlay'];
+                                const spineItem = this.book.spine.items.find(si => 
+                                    si.idref === id || si.id === id
+                                );
+                                
+                                if (spineItem && !spineItem.mediaOverlay) {
+                                    spineItem.mediaOverlay = overlayId;
+                                    this.overlayChapters.push(spineItem);
+                                }
+                            }
+                        }
+                        
+                        if (this.overlayChapters.length === 0) {
+                            smilFiles.forEach(smilFile => {
+                                const baseId = smilFile.id.replace('_overlay', '');
+                                const spineItem = this.book.spine.items.find(si => 
+                                    si.idref === baseId || si.id === baseId
+                                );
+                                
+                                if (spineItem) {
+                                    spineItem.mediaOverlay = smilFile.id;
+                                    this.overlayChapters.push(spineItem);
+                                }
+                            });
+                        }
+                        
+                        if (this.overlayChapters.length === 0) {
+                            smilFiles.forEach(smilFile => {
+                                const smilBaseName = smilFile.href.split('/').pop().replace('.smil', '');
+                                
+                                const spineItem = this.book.spine.items.find(si => {
+                                    const spineFileName = si.href.split('/').pop().replace(/\.(html|xhtml)$/, '');
+                                    return smilBaseName === spineFileName;
+                                });
+                                
+                                if (spineItem) {
+                                    spineItem.mediaOverlay = smilFile.id;
+                                    this.overlayChapters.push(spineItem);
+                                }
+                            });
+                        }
+                    }
+
+                    if (this.overlayChapters.length > 0) {
+                        this.elements.chaptersBtn.disabled = false;
+                        await this.loadChapterOverlay(this.overlayChapters[0]);
+                    } else {
+                        this.showNotification('No media overlays detected', 'error');
+                    }
+                } catch (error) {
+                    console.error('Error checking overlays:', error);
+                    this.showNotification('Error checking for media overlays', 'error');
+                }
+            }
+
+            async loadChapterOverlay(spineItem) {
+                try {
+                    if (this.isPlaying) {
+                        this.controller.pause();
+                        this.isPlaying = false;
+                        this.elements.playBtn.innerHTML = '<span class="btn-icon">▶</span>';
+                        this.elements.playBtn.classList.remove('playing');
+                    }
+                    
+                    this.controller.clearCache();
+                    this.clearHighlight();
+                    
+                    let overlayRef = spineItem.mediaOverlay;
+                    
+                    if (!overlayRef) return;
+
+                    const manifestItem = this.book.packaging.manifest[overlayRef];
+                    if (!manifestItem) return;
+
+                    const overlayHref = manifestItem.href;
+                    const smilUrl = this.book.path.resolve(overlayHref);
+                    const smilContent = await this.book.load(smilUrl);
+                    
+                    this.segments = await this.parser.parse(smilContent);
+                    this.currentSegmentIndex = 0;
+                    this.currentChapter = spineItem;
+                    
+                    this.controller.setSegments(this.segments);
+                    this.controller.currentSegmentIndex = 0;
+
+                    await this.resolveAudioPaths(overlayHref);
+                    await this.displayChapterContent(spineItem);
+
+                    const chapterTitle = await this.extractChapterTitle(spineItem);
+                    
+                    this.elements.statusBar.style.display = 'flex';
+                    this.elements.bookChapter.textContent = chapterTitle;
+                    this.elements.playBtn.disabled = false;
+                    this.elements.prevBtn.disabled = false;
+                    this.elements.nextBtn.disabled = false;
+                    
+                    this.updateMediaSession();
+                    this.saveProgress();
+
+                } catch (error) {
+                    console.error('Error loading chapter overlay:', error);
+                    this.showNotification('Error loading media overlay: ' + error.message, 'error');
+                }
+            }
+
+            async extractChapterTitle(spineItem) {
+                try {
+                    const chapterPath = spineItem.href;
+                    const archiveFiles = Object.keys(this.book.archive.zip.files);
+                    let actualPath = null;
+                    
+                    if (this.book.archive.zip.files[chapterPath]) {
+                        actualPath = chapterPath;
+                    } else {
+                        const fileName = chapterPath.split('/').pop();
+                        actualPath = archiveFiles.find(f => f.endsWith(fileName));
+                    }
+                    
+                    if (actualPath) {
+                        const zipFile = this.book.archive.zip.files[actualPath];
+                        const content = await zipFile.async('text');
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(content, 'text/html');
+                        
+                        const titleElement = doc.querySelector('title') || 
+                                            doc.querySelector('h1') || 
+                                            doc.querySelector('h2');
+                        
+                        if (titleElement && titleElement.textContent.trim()) {
+                            return titleElement.textContent.trim();
+                        }
+                    }
+                } catch (e) {
+                    console.log('Could not extract chapter title:', e);
+                }
+                
+                return `Chapter ${spineItem.index + 1}`;
+            }
+
+            async displayChapterContent(spineItem) {
+                try {
+                    const chapterPath = spineItem.href;
+                    const archiveFiles = Object.keys(this.book.archive.zip.files);
+                    let actualPath = null;
+                    
+                    if (this.book.archive.zip.files[chapterPath]) {
+                        actualPath = chapterPath;
+                    } else {
+                        const fileName = chapterPath.split('/').pop();
+                        actualPath = archiveFiles.find(f => f.endsWith(fileName));
+                    }
+                    
+                    if (!actualPath) {
+                        this.showNotification('Could not find chapter file', 'error');
+                        return;
+                    }
+                    
+                    const zipFile = this.book.archive.zip.files[actualPath];
+                    const content = await zipFile.async('text');
+                    
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(content, 'text/html');
+                    
+                    const body = doc.body;
+                    if (body && body.innerHTML) {
+                        this.elements.viewer.innerHTML = body.innerHTML;
+                    } else {
+                        this.elements.viewer.innerHTML = content;
+                    }
+                    
+                    await this.loadImages(actualPath);
+                    this.elements.readerArea.scrollTop = 0;
+                    
+                } catch (error) {
+                    console.error('Error displaying chapter:', error);
+                    this.showNotification('Error displaying chapter content: ' + error.message, 'error');
+                }
+            }
+
+            async loadImages(chapterPath) {
+                try {
+                    const images = this.elements.viewer.querySelectorAll('img');
+                    const chapterDir = chapterPath.substring(0, chapterPath.lastIndexOf('/') + 1);
+                    
+                    for (const img of images) {
+                        const originalSrc = img.getAttribute('src');
+                        if (!originalSrc) continue;
+                        
+                        if (originalSrc.startsWith('blob:') || originalSrc.startsWith('http')) {
+                            continue;
+                        }
+                        
+                        try {
+                            let imagePath = originalSrc;
+                            
+                            if (originalSrc.startsWith('../')) {
+                                const upLevels = (originalSrc.match(/\.\.\//g) || []).length;
+                                const cleanPath = originalSrc.replace(/\.\.\//g, '');
+                                const dirParts = chapterDir.split('/').filter(p => p);
+                                const baseParts = dirParts.slice(0, Math.max(0, dirParts.length - upLevels));
+                                imagePath = baseParts.join('/') + '/' + cleanPath;
+                            } else if (!originalSrc.startsWith('/')) {
+                                imagePath = chapterDir + originalSrc;
+                            }
+                            
+                            const archiveFiles = Object.keys(this.book.archive.zip.files);
+                            let actualImagePath = null;
+                            
+                            if (this.book.archive.zip.files[imagePath]) {
+                                actualImagePath = imagePath;
+                            } else {
+                                const imageFilename = imagePath.split('/').pop();
+                                actualImagePath = archiveFiles.find(f => 
+                                    f.toLowerCase().endsWith(imageFilename.toLowerCase())
+                                );
+                            }
+                            
+                            if (actualImagePath) {
+                                const imageFile = this.book.archive.zip.files[actualImagePath];
+                                const imageData = await imageFile.async('arraybuffer');
+                                
+                                const extension = actualImagePath.split('.').pop().toLowerCase();
+                                const mimeTypes = {
+                                    'jpg': 'image/jpeg',
+                                    'jpeg': 'image/jpeg',
+                                    'png': 'image/png',
+                                    'gif': 'image/gif',
+                                    'svg': 'image/svg+xml',
+                                    'webp': 'image/webp'
+                                };
+                                const mimeType = mimeTypes[extension] || 'image/jpeg';
+                                
+                                const blob = new Blob([imageData], { type: mimeType });
+                                const blobUrl = URL.createObjectURL(blob);
+                                
+                                img.src = blobUrl;
+                            }
+                        } catch (error) {
+                            console.error(`Error loading image ${originalSrc}:`, error);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error loading images:', error);
+                }
+            }
+
+            async resolveAudioPaths(smilHref) {
+                const smilDir = smilHref.substring(0, smilHref.lastIndexOf('/') + 1);
+                const archiveFiles = this.book.archive && this.book.archive.zip ? 
+                    Object.keys(this.book.archive.zip.files) : [];
+                
+                const uniqueAudioFiles = new Set();
+                this.segments.forEach(seg => uniqueAudioFiles.add(seg.audioSrc));
+                
+                this.audioBlobUrls = new Map();
+                
+                for (const audioPath of uniqueAudioFiles) {
+                    try {
+                        const pathsToTry = [];
+                        const filename = audioPath.split('/').pop();
+                        
+                        const audioFilesInArchive = archiveFiles.filter(f => 
+                            f.toLowerCase().endsWith(filename.toLowerCase())
+                        );
+                        
+                        if (audioFilesInArchive.length > 0) {
+                            pathsToTry.push(audioFilesInArchive[0]);
+                        } else {
+                            pathsToTry.push(`Audio/${filename}`);
+                            pathsToTry.push(`OEBPS/Audio/${filename}`);
+                            pathsToTry.push(`OPS/Audio/${filename}`);
+                        }
+                        
+                        let audioData = null;
+                        let successPath = null;
+                        
+                        for (const path of pathsToTry) {
+                            try {
+                                if (this.book.archive.zip && this.book.archive.zip.files[path]) {
+                                    const zipFile = this.book.archive.zip.files[path];
+                                    const data = await zipFile.async('arraybuffer');
+                                    audioData = data;
+                                    successPath = path;
+                                    break;
+                                }
+                            } catch (e) {
+                                // Try next path
+                            }
+                        }
+                        
+                        if (!audioData) {
+                            continue;
+                        }
+                        
+                        const extension = successPath.split('.').pop().toLowerCase();
+                        const mimeTypes = {
+                            'mp3': 'audio/mpeg',
+                            'mp4': 'audio/mp4',
+                            'm4a': 'audio/mp4',
+                            'wav': 'audio/wav',
+                            'ogg': 'audio/ogg'
+                        };
+                        const mimeType = mimeTypes[extension] || 'audio/mp4';
+                        
+                        const blob = new Blob([audioData], { type: mimeType });
+                        
+                        if (blob.size === 0) {
+                            continue;
+                        }
+                        
+                        const blobUrl = URL.createObjectURL(blob);
+                        this.audioBlobUrls.set(audioPath, blobUrl);
+                        
+                    } catch (error) {
+                        console.error(`Error loading audio ${audioPath}:`, error);
+                    }
+                }
+                
+                if (this.audioBlobUrls.size === 0) {
+                    this.showNotification('Could not load audio files', 'error');
+                }
+            }
+
+            async togglePlay() {
+                if (this.segments.length === 0) {
+                    this.showNotification('No audio segments loaded', 'error');
+                    return;
+                }
+
+                if (!this.isPlaying) {
+                    const segment = this.segments[this.currentSegmentIndex];
+                    
+                    try {
+                        const blobUrl = this.audioBlobUrls.get(segment.audioSrc);
+                        
+                        if (!blobUrl) {
+                            throw new Error(`Audio file not loaded: ${segment.audioSrc}`);
+                        }
+                        
+                        await this.controller.loadSegment(segment, '', blobUrl);
+                        this.highlightSegment(segment);
+                        this.controller.play();
+                        this.isPlaying = true;
+                        this.elements.playBtn.innerHTML = '<span class="btn-icon">⏸</span>';
+                        this.elements.playBtn.classList.add('playing');
+                        
+                    } catch (error) {
+                        console.error('Error playing:', error);
+                        this.showNotification('Error: ' + error.message, 'error');
+                    }
+                } else {
+                    this.controller.pause();
+                    this.isPlaying = false;
+                    this.elements.playBtn.innerHTML = '<span class="btn-icon">▶</span>';
+                    this.elements.playBtn.classList.remove('playing');
+                    this.saveProgress();
+                }
+            }
+
+            async previousSegment() {
+                if (this.currentSegmentIndex > 0) {
+                    this.currentSegmentIndex--;
+                    await this.playCurrentSegment();
+                }
+            }
+
+            async nextSegment() {
+                if (this.currentSegmentIndex < this.segments.length - 1) {
+                    this.currentSegmentIndex++;
+                    await this.playCurrentSegment();
+                }
+            }
+
+            async handleNext() {
+                if (this.currentSegmentIndex < this.segments.length - 1) {
+                    this.currentSegmentIndex++;
+                    await this.playCurrentSegment();
+                } else {
+                    this.isPlaying = false;
+                    this.elements.playBtn.innerHTML = '<span class="btn-icon">▶</span>';
+                    this.clearHighlight();
+                    
+                    const currentChapterIndex = this.overlayChapters.findIndex(
+                        ch => ch.href === this.currentChapter.href
+                    );
+                    
+                    if (currentChapterIndex !== -1 && currentChapterIndex < this.overlayChapters.length - 1) {
+                        const nextChapter = this.overlayChapters[currentChapterIndex + 1];
+                        
+                        this.showNotification(`Loading next chapter...`, 'info');
+                        
+                        await this.loadChapterOverlay(nextChapter);
+                        
+                        setTimeout(() => {
+                            this.currentSegmentIndex = 0;
+                            this.isPlaying = true;
+                            this.elements.playBtn.innerHTML = '<span class="btn-icon">⏸</span>';
+                            this.playCurrentSegment();
+                        }, 500);
+                    } else {
+                        this.showNotification('Finished all chapters!', 'success');
+                        this.saveProgress();
+                    }
+                }
+            }
+
+            async playCurrentSegment() {
+                if (!this.isPlaying) return;
+
+                const segment = this.segments[this.currentSegmentIndex];
+                
+                try {
+                    this.clearHighlight();
+                    
+                    const blobUrl = this.audioBlobUrls.get(segment.audioSrc);
+                    if (!blobUrl) {
+                        throw new Error(`Audio file not loaded: ${segment.audioSrc}`);
+                    }
+                    
+                    await this.controller.loadSegment(segment, '', blobUrl);
+                    this.highlightSegment(segment);
+                    this.controller.play();
+                } catch (error) {
+                    this.showNotification('Error: ' + error.message, 'error');
+                }
+            }
+
+            highlightSegment(segment) {
+                const fragmentMatch = segment.textSrc.match(/#(.+)$/);
+                if (!fragmentMatch) return;
+
+                const fragmentId = fragmentMatch[1];
+                const element = this.elements.viewer.querySelector(`#${fragmentId}`);
+                
+                if (element) {
+                    this.clearHighlight();
+                    element.classList.add('epub-media-overlay-active');
+                    
+                    const readerArea = this.elements.readerArea;
+                    const elementTop = element.offsetTop;
+                    const viewportHeight = readerArea.clientHeight;
+                    const targetScroll = elementTop - (viewportHeight / 3);
+                    
+                    readerArea.scrollTo({
+                        top: targetScroll,
+                        behavior: 'smooth'
+                    });
+                }
+            }
+
+            clearHighlight() {
+                const highlighted = this.elements.viewer.querySelectorAll('.epub-media-overlay-active');
+                highlighted.forEach(el => el.classList.remove('epub-media-overlay-active'));
+            }
+
+            setSpeed(value) {
+                const speed = parseFloat(value);
+                this.controller.setPlaybackRate(speed);
+            }
+
+            async showAudioChapters() {
+                if (this.overlayChapters.length === 0) {
+                    alert('No audio chapters available');
+                    return;
+                }
+
+                const modal = document.createElement('div');
+                modal.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: rgba(0, 0, 0, 0.8);
+                    z-index: 2000;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 1rem;
+                `;
+
+                const chaptersContainer = document.createElement('div');
+                chaptersContainer.style.cssText = `
+                    background: #1e293b;
+                    border-radius: 1rem;
+                    padding: 2rem;
+                    max-width: 700px;
+                    width: 100%;
+                    max-height: 80vh;
+                    overflow-y: auto;
+                    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+                `;
+
+                const title = document.createElement('h2');
+                title.textContent = 'Audio Chapters';
+                title.style.cssText = `
+                    color: #f8fafc;
+                    margin-bottom: 1.5rem;
+                    font-size: 1.5rem;
+                    font-weight: 700;
+                `;
+                chaptersContainer.appendChild(title);
+
+                const chaptersList = document.createElement('div');
+                chaptersList.style.cssText = `
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0.5rem;
+                `;
+
+                for (let index = 0; index < this.overlayChapters.length; index++) {
+                    const chapter = this.overlayChapters[index];
+                    let chapterTitle = await this.extractChapterTitle(chapter);
+
+                    const item = document.createElement('button');
+                    item.innerHTML = `
+                        <div style="font-weight: 600;">${index + 1}. ${chapterTitle}</div>
+                    `;
+                    item.style.cssText = `
+                        background: #0f172a;
+                        color: #f8fafc;
+                        border: 1px solid #334155;
+                        padding: 1rem;
+                        border-radius: 0.5rem;
+                        cursor: pointer;
+                        text-align: left;
+                        transition: all 0.2s;
+                        width: 100%;
+                    `;
+
+                    item.addEventListener('mouseenter', () => {
+                        item.style.background = '#334155';
+                        item.style.transform = 'translateX(4px)';
+                    });
+
+                    item.addEventListener('mouseleave', () => {
+                        item.style.background = '#0f172a';
+                        item.style.transform = 'translateX(0)';
+                    });
+
+                    item.addEventListener('click', async () => {
+                        modal.remove();
+                        await this.loadChapterOverlay(chapter);
+                    });
+
+                    chaptersList.appendChild(item);
+                }
+
+                chaptersContainer.appendChild(chaptersList);
+
+                const closeBtn = document.createElement('button');
+                closeBtn.textContent = 'Close';
+                closeBtn.style.cssText = `
+                    background: #2563eb;
+                    color: white;
+                    border: none;
+                    padding: 0.75rem 1.5rem;
+                    border-radius: 0.5rem;
+                    cursor: pointer;
+                    font-size: 1rem;
+                    font-weight: 600;
+                    margin-top: 1.5rem;
+                    width: 100%;
+                    transition: all 0.2s;
+                `;
+
+                closeBtn.addEventListener('click', () => modal.remove());
+                chaptersContainer.appendChild(closeBtn);
+                modal.appendChild(chaptersContainer);
+                document.body.appendChild(modal);
+
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) modal.remove();
+                });
+            }
+
+            handleKeyboard(e) {
+                if (!this.book) return;
+
+                switch(e.key) {
+                    case 'ArrowLeft':
+                        if (e.ctrlKey) this.previousSegment();
+                        break;
+                    case 'ArrowRight':
+                        if (e.ctrlKey) this.nextSegment();
+                        break;
+                    case ' ':
+                        e.preventDefault();
+                        this.togglePlay();
+                        break;
+                    case 'f':
+                    case 'F':
+                        if (e.ctrlKey || e.metaKey) {
+                            e.preventDefault();
+                            this.toggleFullscreen();
+                        }
+                        break;
+                    case 'Escape':
+                        if (this.isFullscreen) {
+                            this.toggleFullscreen();
+                        }
+                        break;
+                }
+            }
+
+            showNotification(message, type = 'success') {
+                const notification = document.createElement('div');
+                notification.className = `notification ${type}`;
+                notification.textContent = message;
+                document.body.appendChild(notification);
+
+                setTimeout(() => {
+                    notification.style.opacity = '0';
+                    setTimeout(() => notification.remove(), 300);
+                }, 4000);
+            }
+        }
+
+        const app = new EPUBMediaOverlayApp();
+        console.log('=== Ready to load EPUBs ===');
+    </script>
+</body>
+</html>
