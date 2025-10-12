@@ -1622,8 +1622,27 @@
                 this.initUI();
                 this.bindEvents();
                 this.initMediaSession();
+                this.clearCachedBooksOnStartup();
                 this.renderLibrary();
                 console.log('App initialized successfully');
+            }
+
+            clearCachedBooksOnStartup() {
+                // Clear all cached file data on app startup to avoid stale data issues
+                // Users will need to re-upload local books or re-download cloud books
+                if (!Array.isArray(this.libraryManager.books)) {
+                    return;
+                }
+                
+                this.libraryManager.books.forEach(book => {
+                    if (book.fileData) {
+                        delete book.fileData;
+                        book.isCached = false;
+                    }
+                });
+                
+                this.libraryManager.saveToStorage();
+                console.log('Cleared cached book data on startup');
             }
 
             initMediaSession() {
