@@ -1248,6 +1248,7 @@
                 
                 // Check if book already exists
                 const existingIndex = this.books.findIndex(b => b.id === bookData.id);
+                const existingBook = existingIndex !== -1 ? this.books[existingIndex] : null;
                 
                 // If we're caching this book's file data, clear file data from all other books
                 if (cacheFileData && bookData.fileData) {
@@ -1264,15 +1265,16 @@
                     title: bookData.title,
                     author: bookData.author,
                     coverImage: bookData.coverImage,
-                    addedDate: bookData.addedDate || new Date().toISOString(),
-                    lastRead: bookData.lastRead || null,
-                    progress: bookData.progress || {
+                    addedDate: bookData.addedDate || (existingBook ? existingBook.addedDate : new Date().toISOString()),
+                    lastRead: bookData.lastRead || (existingBook ? existingBook.lastRead : null),
+                    // IMPORTANT: Preserve existing progress if book exists, otherwise use provided progress
+                    progress: existingBook && existingBook.progress ? existingBook.progress : (bookData.progress || {
                         chapterIndex: 0,
                         segmentIndex: 0,
                         percentage: 0
-                    },
-                    source: bookData.source || 'local', // 'local' or 'cloud'
-                    cloudUrl: bookData.cloudUrl || null // Store cloud URL if from cloud
+                    }),
+                    source: bookData.source || (existingBook ? existingBook.source : 'local'),
+                    cloudUrl: bookData.cloudUrl || (existingBook ? existingBook.cloudUrl : null)
                 };
                 
                 // Only include file data if explicitly caching
@@ -1284,8 +1286,8 @@
                 }
                 
                 if (existingIndex !== -1) {
-                    // Update existing book, preserving any existing data
-                    this.books[existingIndex] = { ...this.books[existingIndex], ...bookEntry };
+                    // Update existing book
+                    this.books[existingIndex] = bookEntry;
                 } else {
                     // Add new book
                     this.books.push(bookEntry);
@@ -2457,11 +2459,28 @@
                     await this.checkMediaOverlays();
                     
                     // Resume from saved position
-                    if (bookData.progress && bookData.progress.chapterIndex !== undefined) {
+                    if (bookData.progress && bookData.progress.chapterIndex !== undefined && bookData.progress.percentage > 0) {
                         const chapterIndex = bookData.progress.chapterIndex;
+                        const savedSegmentIndex = bookData.progress.segmentIndex || 0;
+                        
                         if (this.overlayChapters[chapterIndex]) {
                             await this.loadChapterOverlay(this.overlayChapters[chapterIndex]);
-                            this.currentSegmentIndex = bookData.progress.segmentIndex || 0;
+                            
+                            // Restore the saved segment position after chapter loads
+                            this.currentSegmentIndex = savedSegmentIndex;
+                            this.controller.currentSegmentIndex = savedSegmentIndex;
+                            
+                            // Highlight and scroll to the saved segment
+                            if (this.segments[savedSegmentIndex]) {
+                                this.highlightSegment(this.segments[savedSegmentIndex]);
+                            }
+                            
+                            this.showNotification(`Resumed at ${bookData.progress.percentage}%`, 'success');
+                        }
+                    } else {
+                        // Start from beginning if no saved progress
+                        if (this.overlayChapters.length > 0) {
+                            await this.loadChapterOverlay(this.overlayChapters[0]);
                         }
                     }
                     
@@ -2826,7 +2845,7 @@
                     this.elements.nextBtn.disabled = false;
                     
                     this.updateMediaSession();
-                    this.saveProgress();
+                    // Don't save progress here - it will overwrite saved position during resume
 
                 } catch (error) {
                     console.error('Error loading chapter overlay:', error);
@@ -2900,11 +2919,90 @@
                     }
                     
                     await this.loadImages(actualPath);
+                    this.attachSegmentClickHandlers();
                     this.elements.readerArea.scrollTop = 0;
                     
                 } catch (error) {
                     console.error('Error displaying chapter:', error);
                     this.showNotification('Error displaying chapter content: ' + error.message, 'error');
+                }
+            }
+
+            attachSegmentClickHandlers() {
+                // Add click handlers to all segments
+                this.segments.forEach((segment, index) => {
+                    // Extract the fragment ID from textSrc (e.g., "chapter1.xhtml#segment1" -> "segment1")
+                    const fragmentMatch = segment.textSrc.match(/#(.+)$/);
+                    if (!fragmentMatch) return;
+                    
+                    const fragmentId = fragmentMatch[1];
+                    const element = this.elements.viewer.querySelector(`#${fragmentId}`);
+                    
+                    if (element) {
+                        element.style.cursor = 'pointer';
+                        element.title = 'Click to play from here';
+                        
+                        // Store the segment index on the element
+                        element.dataset.segmentIndex = index;
+                        
+                        // Add click handler
+                        element.addEventListener('click', async (e) => {
+                            e.preventDefault();
+                            const segmentIndex = parseInt(e.currentTarget.dataset.segmentIndex);
+                            await this.jumpToSegment(segmentIndex);
+                        });
+                    }
+                });
+            }
+
+            async jumpToSegment(segmentIndex) {
+                if (segmentIndex < 0 || segmentIndex >= this.segments.length) {
+                    return;
+                }
+                
+                // Stop current playback if playing
+                if (this.isPlaying) {
+                    this.controller.pause();
+                    this.isPlaying = false;
+                    this.elements.playBtn.innerHTML = '<span class="btn-icon">▶</span>';
+                    this.elements.playBtn.classList.remove('playing');
+                }
+                
+                // Jump to the segment
+                this.currentSegmentIndex = segmentIndex;
+                this.controller.currentSegmentIndex = segmentIndex;
+                
+                // Clear previous highlight
+                this.clearHighlight();
+                
+                // Highlight the clicked segment
+                const segment = this.segments[segmentIndex];
+                this.highlightSegment(segment);
+                
+                // Save progress
+                this.saveProgress();
+                
+                // Show notification
+                const percentage = Math.round((segmentIndex / this.segments.length) * 100);
+                this.showNotification(`Jumped to ${percentage}% of chapter`, 'info');
+                
+                // Auto-play from this position
+                try {
+                    const blobUrl = this.audioBlobUrls.get(segment.audioSrc);
+                    
+                    if (!blobUrl) {
+                        throw new Error(`Audio file not loaded: ${segment.audioSrc}`);
+                    }
+                    
+                    await this.controller.loadSegment(segment, '', blobUrl);
+                    this.controller.play();
+                    this.isPlaying = true;
+                    this.elements.playBtn.innerHTML = '<span class="btn-icon">⏸</span>';
+                    this.elements.playBtn.classList.add('playing');
+                    
+                } catch (error) {
+                    console.error('Error playing from segment:', error);
+                    this.showNotification('Error: ' + error.message, 'error');
                 }
             }
 
