@@ -1660,6 +1660,7 @@
                 
                 this.tokenClient = null;
                 this.accessToken = null;
+                this.tokenExpiresAt = null;
                 this.gapiInited = false;
                 this.gisInited = false;
                 this.fileId = null;
@@ -1668,6 +1669,67 @@
                 this.autoSyncEnabled = localStorage.getItem('auto_sync_enabled') === 'true';
                 this.syncInterval = null;
                 this.lastSyncTime = localStorage.getItem('last_sync_time');
+                
+                // Load saved authentication
+                this.loadSavedAuth();
+            }
+
+            loadSavedAuth() {
+                try {
+                    const savedToken = localStorage.getItem('gdrive_access_token');
+                    const savedExpiry = localStorage.getItem('gdrive_token_expiry');
+                    
+                    if (savedToken && savedExpiry) {
+                        const expiryTime = parseInt(savedExpiry);
+                        const now = Date.now();
+                        
+                        // Check if token is still valid (with 5 minute buffer)
+                        if (expiryTime > now + (5 * 60 * 1000)) {
+                            this.accessToken = savedToken;
+                            this.tokenExpiresAt = expiryTime;
+                            console.log('✓ Restored saved Google Drive authentication');
+                        } else {
+                            console.log('Saved token expired, will request new one');
+                            this.clearSavedAuth();
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error loading saved auth:', error);
+                    this.clearSavedAuth();
+                }
+            }
+
+            saveAuth(accessToken, expiresIn) {
+                try {
+                    // expiresIn is in seconds, convert to milliseconds and add to current time
+                    const expiryTime = Date.now() + (expiresIn * 1000);
+                    
+                    localStorage.setItem('gdrive_access_token', accessToken);
+                    localStorage.setItem('gdrive_token_expiry', expiryTime.toString());
+                    
+                    this.accessToken = accessToken;
+                    this.tokenExpiresAt = expiryTime;
+                    
+                    console.log('✓ Saved Google Drive authentication');
+                } catch (error) {
+                    console.error('Error saving auth:', error);
+                }
+            }
+
+            clearSavedAuth() {
+                localStorage.removeItem('gdrive_access_token');
+                localStorage.removeItem('gdrive_token_expiry');
+                this.accessToken = null;
+                this.tokenExpiresAt = null;
+            }
+
+            isTokenValid() {
+                if (!this.accessToken || !this.tokenExpiresAt) {
+                    return false;
+                }
+                
+                // Check if token expires in more than 5 minutes
+                return this.tokenExpiresAt > Date.now() + (5 * 60 * 1000);
             }
 
             async initialize() {
@@ -1720,18 +1782,35 @@
             async requestAccessToken() {
                 return new Promise((resolve, reject) => {
                     try {
+                        // Check if we have a valid saved token first
+                        if (this.isTokenValid()) {
+                            console.log('✓ Using saved Google Drive token');
+                            resolve({ access_token: this.accessToken });
+                            return;
+                        }
+                        
                         this.tokenClient.callback = (response) => {
                             if (response.error !== undefined) {
                                 reject(response);
                             } else {
                                 this.accessToken = response.access_token;
+                                
+                                // Save token with expiration (default 3600 seconds = 1 hour)
+                                const expiresIn = response.expires_in || 3600;
+                                this.saveAuth(response.access_token, expiresIn);
+                                
+                                console.log('✓ New Google Drive token obtained and saved');
                                 resolve(response);
                             }
                         };
                         
+                        // Request new token
+                        console.log('Requesting new Google Drive token...');
                         if (this.accessToken === null) {
+                            // First time - show full consent screen
                             this.tokenClient.requestAccessToken({ prompt: 'consent' });
                         } else {
+                            // Try to refresh silently first
                             this.tokenClient.requestAccessToken({ prompt: '' });
                         }
                     } catch (err) {
@@ -1746,8 +1825,8 @@
                         throw new Error('Google Drive API not initialized');
                     }
 
-                    // Request access token if needed
-                    if (!this.accessToken) {
+                    // Check if token is valid, request new one if needed
+                    if (!this.isTokenValid()) {
                         await this.requestAccessToken();
                     }
 
@@ -1777,6 +1856,13 @@
                     return { success: true, message: 'Synced to Google Drive!' };
                 } catch (error) {
                     console.error('Sync error:', error);
+                    
+                    // If authentication error, clear saved auth and try again
+                    if (error.message && (error.message.includes('401') || error.message.includes('403'))) {
+                        console.log('Authentication error, clearing saved token');
+                        this.clearSavedAuth();
+                    }
+                    
                     return { success: false, error: error.message };
                 }
             }
@@ -1787,8 +1873,8 @@
                         throw new Error('Google Drive API not initialized');
                     }
 
-                    // Request access token if needed
-                    if (!this.accessToken) {
+                    // Check if token is valid, request new one if needed
+                    if (!this.isTokenValid()) {
                         await this.requestAccessToken();
                     }
 
@@ -3141,6 +3227,22 @@
                         <div style="margin-bottom: 1.5rem; padding: 1rem; background: #0f172a; border-radius: 0.5rem;">
                             <div style="display: flex; justify-content: space-between; align-items: center;">
                                 <div>
+                                    <div style="font-weight: 600; margin-bottom: 0.25rem;">Authentication</div>
+                                    <div style="font-size: 0.875rem; color: ${this.syncManager.isTokenValid() ? '#10b981' : '#94a3b8'};">
+                                        ${this.syncManager.isTokenValid() ? '✓ Signed in (stays signed in)' : '○ Not signed in'}
+                                    </div>
+                                </div>
+                                ${this.syncManager.isTokenValid() ? `
+                                <button id="signOutBtn" style="background: #dc2626; color: white; border: none; padding: 0.5rem 1rem; border-radius: 0.375rem; font-size: 0.875rem; font-weight: 600; cursor: pointer;">
+                                    Sign Out
+                                </button>
+                                ` : ''}
+                            </div>
+                        </div>
+                        
+                        <div style="margin-bottom: 1.5rem; padding: 1rem; background: #0f172a; border-radius: 0.5rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div>
                                     <div style="font-weight: 600; margin-bottom: 0.25rem;">Auto-Sync</div>
                                     <div style="font-size: 0.875rem; color: #cbd5e1;">Sync every 5 minutes</div>
                                 </div>
@@ -3179,6 +3281,18 @@
                 `;
 
                 document.body.appendChild(modal);
+
+                // Sign out button handler
+                const signOutBtn = modal.querySelector('#signOutBtn');
+                if (signOutBtn) {
+                    signOutBtn.addEventListener('click', () => {
+                        if (confirm('Are you sure you want to sign out of Google Drive?')) {
+                            this.syncManager.clearSavedAuth();
+                            modal.remove();
+                            this.showNotification('Signed out of Google Drive', 'info');
+                        }
+                    });
+                }
 
                 modal.querySelector('#uploadToGDrive').addEventListener('click', async () => {
                     modal.remove();
