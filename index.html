@@ -1632,6 +1632,11 @@
                 this.gapiInited = false;
                 this.gisInited = false;
                 this.fileId = null;
+                
+                // Auto-sync settings
+                this.autoSyncEnabled = localStorage.getItem('auto_sync_enabled') === 'true';
+                this.syncInterval = null;
+                this.lastSyncTime = localStorage.getItem('last_sync_time');
             }
 
             async initialize() {
@@ -1733,6 +1738,10 @@
                         this.fileId = await this.createFile(blob);
                         localStorage.setItem('gdrive_sync_file_id', this.fileId);
                     }
+
+                    // Update last sync time
+                    this.lastSyncTime = new Date().toISOString();
+                    localStorage.setItem('last_sync_time', this.lastSyncTime);
 
                     return { success: true, message: 'Synced to Google Drive!' };
                 } catch (error) {
@@ -1923,6 +1932,83 @@
                 modal.querySelector('#cancelConfigBtn').addEventListener('click', () => {
                     modal.remove();
                 });
+            }
+
+            enableAutoSync() {
+                this.autoSyncEnabled = true;
+                localStorage.setItem('auto_sync_enabled', 'true');
+            }
+
+            disableAutoSync() {
+                this.autoSyncEnabled = false;
+                localStorage.setItem('auto_sync_enabled', 'false');
+                if (this.syncInterval) {
+                    clearInterval(this.syncInterval);
+                    this.syncInterval = null;
+                }
+            }
+
+            startAutoSync(libraryManager) {
+                if (!this.autoSyncEnabled || !this.isConfigured()) {
+                    return;
+                }
+
+                // Sync every 5 minutes
+                this.syncInterval = setInterval(async () => {
+                    console.log('Auto-syncing to Google Drive...');
+                    const books = libraryManager.getAllBooks();
+                    const result = await this.syncToGoogleDrive(books);
+                    if (result.success) {
+                        console.log('Auto-sync successful');
+                    } else {
+                        console.error('Auto-sync failed:', result.error);
+                    }
+                }, 5 * 60 * 1000); // 5 minutes
+            }
+
+            async performInitialSync(libraryManager) {
+                if (!this.autoSyncEnabled || !this.isConfigured()) {
+                    return { skipped: true };
+                }
+
+                try {
+                    // Try to download from Google Drive first
+                    const downloadResult = await this.syncFromGoogleDrive();
+                    
+                    if (downloadResult.success) {
+                        // Check if remote is newer
+                        const localBooks = libraryManager.getAllBooks();
+                        const remoteSync = new Date(downloadResult.lastSync);
+                        const localSync = this.lastSyncTime ? new Date(this.lastSyncTime) : new Date(0);
+                        
+                        if (remoteSync > localSync) {
+                            // Remote is newer, merge data
+                            console.log('Syncing from Google Drive (remote is newer)');
+                            return { 
+                                success: true, 
+                                action: 'downloaded',
+                                data: downloadResult.data,
+                                lastSync: downloadResult.lastSync
+                            };
+                        } else {
+                            // Local is newer or same, upload to Drive
+                            console.log('Uploading to Google Drive (local is newer)');
+                            await this.syncToGoogleDrive(localBooks);
+                            return { success: true, action: 'uploaded' };
+                        }
+                    } else {
+                        // No remote file, upload local data
+                        const localBooks = libraryManager.getAllBooks();
+                        if (localBooks.length > 0) {
+                            console.log('Uploading to Google Drive (no remote file)');
+                            await this.syncToGoogleDrive(localBooks);
+                            return { success: true, action: 'uploaded' };
+                        }
+                    }
+                } catch (error) {
+                    console.error('Initial sync error:', error);
+                    return { success: false, error: error.message };
+                }
             }
         }
         
@@ -2401,7 +2487,37 @@
                 this.initMediaSession();
                 this.clearCachedBooksOnStartup();
                 this.renderLibrary();
+                
+                // Perform initial sync and start auto-sync
+                this.performInitialSyncAndStart();
+                
                 console.log('App initialized successfully');
+            }
+
+            async performInitialSyncAndStart() {
+                // Wait a bit for the app to fully load
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                if (this.syncManager.autoSyncEnabled && this.syncManager.isConfigured()) {
+                    console.log('Auto-sync enabled, performing initial sync...');
+                    
+                    const result = await this.syncManager.performInitialSync(this.libraryManager);
+                    
+                    if (result.success && result.action === 'downloaded') {
+                        // Merge downloaded data with local
+                        result.data.forEach(book => {
+                            this.libraryManager.addBook(book, false);
+                        });
+                        this.renderLibrary();
+                        this.showNotification('Library synced from Google Drive', 'success');
+                    } else if (result.success && result.action === 'uploaded') {
+                        this.showNotification('Library uploaded to Google Drive', 'success');
+                    }
+                    
+                    // Start periodic auto-sync
+                    this.syncManager.startAutoSync(this.libraryManager);
+                    console.log('Auto-sync started (every 5 minutes)');
+                }
             }
 
             clearCachedBooksOnStartup() {
@@ -2957,6 +3073,22 @@
                     <div style="background: #1e293b; border-radius: 1rem; padding: 2rem; max-width: 500px; width: 100%; color: #f8fafc;">
                         <h2 style="margin-bottom: 1.5rem; font-size: 1.5rem;">🔄 Google Drive Sync</h2>
                         
+                        <div style="margin-bottom: 1.5rem; padding: 1rem; background: #0f172a; border-radius: 0.5rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <div style="font-weight: 600; margin-bottom: 0.25rem;">Auto-Sync</div>
+                                    <div style="font-size: 0.875rem; color: #cbd5e1;">Sync every 5 minutes</div>
+                                </div>
+                                <label style="position: relative; display: inline-block; width: 50px; height: 26px;">
+                                    <input type="checkbox" id="autoSyncToggle" ${this.syncManager.autoSyncEnabled ? 'checked' : ''} style="opacity: 0; width: 0; height: 0;">
+                                    <span style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: ${this.syncManager.autoSyncEnabled ? '#10b981' : '#334155'}; border-radius: 26px; transition: 0.3s;" id="autoSyncSlider">
+                                        <span style="position: absolute; content: ''; height: 18px; width: 18px; left: ${this.syncManager.autoSyncEnabled ? '26px' : '4px'}; bottom: 4px; background: white; border-radius: 50%; transition: 0.3s;"></span>
+                                    </span>
+                                </label>
+                            </div>
+                            ${this.syncManager.lastSyncTime ? `<div style="margin-top: 0.5rem; font-size: 0.75rem; color: #94a3b8;">Last sync: ${new Date(this.syncManager.lastSyncTime).toLocaleString()}</div>` : ''}
+                        </div>
+                        
                         <div style="display: flex; flex-direction: column; gap: 1rem;">
                             <button id="uploadToGDrive" style="background: #10b981; color: white; border: none; padding: 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; font-size: 1rem;">
                                 ⬆️ Upload Library to Google Drive
@@ -3024,6 +3156,26 @@
                         }
                     } else {
                         this.showNotification('Sync failed: ' + result.error, 'error');
+                    }
+                });
+
+                // Auto-sync toggle
+                const autoSyncToggle = modal.querySelector('#autoSyncToggle');
+                const autoSyncSlider = modal.querySelector('#autoSyncSlider');
+                autoSyncToggle.addEventListener('change', (e) => {
+                    const enabled = e.target.checked;
+                    
+                    if (enabled) {
+                        this.syncManager.enableAutoSync();
+                        this.syncManager.startAutoSync(this.libraryManager);
+                        autoSyncSlider.style.background = '#10b981';
+                        autoSyncSlider.querySelector('span').style.left = '26px';
+                        this.showNotification('Auto-sync enabled (every 5 minutes)', 'success');
+                    } else {
+                        this.syncManager.disableAutoSync();
+                        autoSyncSlider.style.background = '#334155';
+                        autoSyncSlider.querySelector('span').style.left = '4px';
+                        this.showNotification('Auto-sync disabled', 'info');
                     }
                 });
 
