@@ -1,0 +1,33 @@
+{
+  "name": "epub-reader-pwa",
+  "version": "1.0.0",
+  "description": "A Progressive Web App for reading EPUB3 books with media overlay support",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve",
+    "dev": "npx serve",
+    "deploy:netlify": "netlify deploy --prod --dir=.",
+    "deploy:vercel": "vercel --prod"
+  },
+  "keywords": [
+    "epub",
+    "epub3",
+    "reader",
+    "pwa",
+    "progressive-web-app",
+    "ebook",
+    "audiobook",
+    "media-overlay"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/epub-reader.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/epub-reader/issues"
+  },
+  "homepage": "https://github.com/yourusername/epub-reader#readme"
+}

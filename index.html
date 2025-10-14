@@ -3,6 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="A powerful EPUB reader with media overlay support, Google Drive sync, and offline capabilities">
+    <meta name="theme-color" content="#2563eb">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="EPUB Reader">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
     <title>EPUB3 Media Overlay Reader</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
@@ -4841,6 +4848,138 @@
 
         const app = new EPUBMediaOverlayApp();
         console.log('=== Ready to load EPUBs ===');
+
+        // Register Service Worker for PWA functionality
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then((registration) => {
+                        console.log('✓ Service Worker registered successfully:', registration.scope);
+                        
+                        // Check for updates periodically
+                        setInterval(() => {
+                            registration.update();
+                        }, 60 * 60 * 1000); // Check every hour
+                        
+                        // Listen for updates
+                        registration.addEventListener('updatefound', () => {
+                            const newWorker = registration.installing;
+                            newWorker.addEventListener('statechange', () => {
+                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                    // New service worker available
+                                    if (confirm('A new version is available! Reload to update?')) {
+                                        newWorker.postMessage({ type: 'SKIP_WAITING' });
+                                        window.location.reload();
+                                    }
+                                }
+                            });
+                        });
+                    })
+                    .catch((error) => {
+                        console.error('Service Worker registration failed:', error);
+                    });
+                
+                // Listen for messages from service worker
+                navigator.serviceWorker.addEventListener('message', (event) => {
+                    if (event.data.type === 'BACKGROUND_SYNC') {
+                        console.log('Background sync triggered');
+                        // Trigger sync if auto-sync is enabled
+                        if (app.syncManager.autoSyncEnabled) {
+                            const books = app.libraryManager.getAllBooks();
+                            app.syncManager.syncToGoogleDrive(books)
+                                .then((result) => {
+                                    if (result.success) {
+                                        console.log('Background sync completed');
+                                    }
+                                });
+                        }
+                    }
+                });
+            });
+        }
+
+        // Handle install prompt
+        let deferredPrompt;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            console.log('Install prompt available');
+            e.preventDefault();
+            deferredPrompt = e;
+            
+            // Show custom install notification
+            const installNotification = document.createElement('div');
+            installNotification.style.cssText = `
+                position: fixed;
+                bottom: 2rem;
+                left: 50%;
+                transform: translateX(-50%);
+                background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+                color: white;
+                padding: 1rem 1.5rem;
+                border-radius: 0.75rem;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+                z-index: 10000;
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+                max-width: 90vw;
+                animation: slideUp 0.3s ease;
+            `;
+            
+            installNotification.innerHTML = `
+                <span style="font-weight: 600;">📱 Install EPUB Reader</span>
+                <button id="installBtn" style="background: white; color: #2563eb; border: none; padding: 0.5rem 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer;">
+                    Install
+                </button>
+                <button id="dismissBtn" style="background: transparent; color: white; border: 1px solid rgba(255,255,255,0.3); padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer;">
+                    Later
+                </button>
+            `;
+            
+            document.body.appendChild(installNotification);
+            
+            document.getElementById('installBtn').addEventListener('click', async () => {
+                installNotification.remove();
+                deferredPrompt.prompt();
+                const { outcome } = await deferredPrompt.userChoice;
+                console.log(`User response to install prompt: ${outcome}`);
+                deferredPrompt = null;
+            });
+            
+            document.getElementById('dismissBtn').addEventListener('click', () => {
+                installNotification.remove();
+            });
+            
+            // Auto-dismiss after 10 seconds
+            setTimeout(() => {
+                if (installNotification.parentNode) {
+                    installNotification.remove();
+                }
+            }, 10000);
+        });
+
+        // Log when app is installed
+        window.addEventListener('appinstalled', () => {
+            console.log('✓ EPUB Reader has been installed!');
+            if (app.showNotification) {
+                app.showNotification('App installed successfully! 🎉', 'success');
+            }
+        });
+
+        // Add animation for install notification
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideUp {
+                from {
+                    transform: translateX(-50%) translateY(100px);
+                    opacity: 0;
+                }
+                to {
+                    transform: translateX(-50%) translateY(0);
+                    opacity: 1;
+                }
+            }
+        `;
+        document.head.appendChild(style);
     </script>
 </body>
 </html>
