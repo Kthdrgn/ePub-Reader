@@ -215,6 +215,16 @@
             transform: scale(1.1);
         }
 
+        #libraryMenuBtn:hover {
+            background: var(--bg-main);
+            border-color: var(--primary);
+        }
+
+        #libraryMenu button:hover {
+            background: var(--bg-main) !important;
+            color: var(--primary) !important;
+        }
+
         .empty-library {
             text-align: center;
             padding: 4rem 2rem;
@@ -1494,19 +1504,27 @@
                     <h1 class="library-title">📚 My Library</h1>
                     <p class="library-stats" id="libraryStats">0 books</p>
                 </div>
-                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                    <div class="file-upload-wrapper">
-                        <button class="file-upload-btn">
-                            <span>➕ Add Book</span>
-                        </button>
-                        <input type="file" id="libraryEpubInput" accept=".epub" />
+                <div style="position: relative;">
+                    <button id="libraryMenuBtn" style="background: var(--bg-card); border: 1px solid var(--border); color: var(--text-primary); padding: 0.75rem 1rem; border-radius: 0.5rem; cursor: pointer; font-size: 1.5rem; display: flex; align-items: center; gap: 0.5rem; transition: all 0.2s;">
+                        <span>☰</span>
+                    </button>
+                    <div id="libraryMenu" style="display: none; position: absolute; top: calc(100% + 0.5rem); right: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: 0.75rem; min-width: 250px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); z-index: 1000; overflow: hidden;">
+                        <div style="padding: 0.5rem;">
+                            <button id="menuAddLocal" style="width: 100%; text-align: left; padding: 0.875rem 1rem; background: transparent; border: none; color: var(--text-primary); cursor: pointer; border-radius: 0.5rem; display: flex; align-items: center; gap: 0.75rem; font-size: 1rem; transition: all 0.2s;">
+                                <span style="font-size: 1.25rem;">➕</span>
+                                <span>Add from Local Storage</span>
+                            </button>
+                            <button id="menuAddCloud" style="width: 100%; text-align: left; padding: 0.875rem 1rem; background: transparent; border: none; color: var(--text-primary); cursor: pointer; border-radius: 0.5rem; display: flex; align-items: center; gap: 0.75rem; font-size: 1rem; transition: all 0.2s;">
+                                <span style="font-size: 1.25rem;">☁️</span>
+                                <span>Add from Cloud</span>
+                            </button>
+                            <button id="menuSync" style="width: 100%; text-align: left; padding: 0.875rem 1rem; background: transparent; border: none; color: var(--text-primary); cursor: pointer; border-radius: 0.5rem; display: flex; align-items: center; gap: 0.75rem; font-size: 1rem; transition: all 0.2s;">
+                                <span style="font-size: 1.25rem;">🔄</span>
+                                <span>Sync with Drive</span>
+                            </button>
+                        </div>
                     </div>
-                    <button class="file-upload-btn" id="addFromCloudBtn" style="background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%); box-shadow: 0 4px 15px rgba(6, 182, 212, 0.4);">
-                        <span>☁️ Add from Cloud</span>
-                    </button>
-                    <button class="file-upload-btn" id="syncBtn" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);">
-                        <span id="syncBtnText">🔄 Sync with Drive</span>
-                    </button>
+                    <input type="file" id="libraryEpubInput" accept=".epub" style="display: none;" />
                 </div>
             </div>
             
@@ -1558,6 +1576,11 @@
             <div class="main-content">
                 <div class="reader-area" id="readerArea">
                     <div class="reader-controls">
+                        <button class="reader-btn" id="fullscreenBtn" title="Toggle Fullscreen">
+                            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" id="fullscreenIcon">
+                                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" fill="currentColor"/>
+                            </svg>
+                        </button>
                         <button class="reader-btn" id="settingsBtn" title="Settings">
                             <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                                 <path d="M12 15a3 3 0 100-6 3 3 0 000 6z" fill="currentColor"/>
@@ -2679,9 +2702,11 @@
                     emptyLibrary: document.getElementById('emptyLibrary'),
                     libraryStats: document.getElementById('libraryStats'),
                     libraryEpubInput: document.getElementById('libraryEpubInput'),
-                    addFromCloudBtn: document.getElementById('addFromCloudBtn'),
-                    syncBtn: document.getElementById('syncBtn'),
-                    syncBtnText: document.getElementById('syncBtnText'),
+                    libraryMenuBtn: document.getElementById('libraryMenuBtn'),
+                    libraryMenu: document.getElementById('libraryMenu'),
+                    menuAddLocal: document.getElementById('menuAddLocal'),
+                    menuAddCloud: document.getElementById('menuAddCloud'),
+                    menuSync: document.getElementById('menuSync'),
                     backToLibraryBtn: document.getElementById('backToLibraryBtn'),
                     viewer: document.getElementById('viewer'),
                     readerArea: document.getElementById('readerArea'),
@@ -2699,7 +2724,9 @@
                     bookCoverImage: document.getElementById('bookCoverImage'),
                     debugPanel: document.getElementById('debugPanel'),
                     debugContent: document.getElementById('debugContent'),
-                    settingsBtn: document.getElementById('settingsBtn')
+                    settingsBtn: document.getElementById('settingsBtn'),
+                    fullscreenBtn: document.getElementById('fullscreenBtn'),
+                    fullscreenIcon: document.getElementById('fullscreenIcon')
                 };
                 
                 // Initialize font size from localStorage or default
@@ -2714,15 +2741,45 @@
             }
 
             bindEvents() {
+                // Hamburger menu toggle
+                this.elements.libraryMenuBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const menu = this.elements.libraryMenu;
+                    menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+                });
+
+                // Menu options
+                this.elements.menuAddLocal.addEventListener('click', () => {
+                    this.elements.libraryMenu.style.display = 'none';
+                    this.elements.libraryEpubInput.click();
+                });
+
+                this.elements.menuAddCloud.addEventListener('click', () => {
+                    this.elements.libraryMenu.style.display = 'none';
+                    this.showCloudImportModal();
+                });
+
+                this.elements.menuSync.addEventListener('click', () => {
+                    this.elements.libraryMenu.style.display = 'none';
+                    this.handleSync();
+                });
+
+                // Close menu when clicking outside
+                document.addEventListener('click', (e) => {
+                    if (!this.elements.libraryMenuBtn.contains(e.target) && 
+                        !this.elements.libraryMenu.contains(e.target)) {
+                        this.elements.libraryMenu.style.display = 'none';
+                    }
+                });
+
                 this.elements.libraryEpubInput.addEventListener('change', (e) => this.loadEPUBToLibrary(e));
-                this.elements.addFromCloudBtn.addEventListener('click', () => this.showCloudImportModal());
-                this.elements.syncBtn.addEventListener('click', () => this.handleSync());
                 this.elements.backToLibraryBtn.addEventListener('click', () => this.showLibrary());
                 this.elements.playBtn.addEventListener('click', () => this.togglePlay());
                 this.elements.prevBtn.addEventListener('click', () => this.previousSegment());
                 this.elements.nextBtn.addEventListener('click', () => this.nextSegment());
                 this.elements.chaptersBtn.addEventListener('click', () => this.showAudioChapters());
                 this.elements.settingsBtn.addEventListener('click', () => this.showSettingsModal());
+                this.elements.fullscreenBtn.addEventListener('click', () => this.toggleFullscreen());
                 
                 document.querySelectorAll('.speed-btn').forEach(btn => {
                     btn.addEventListener('click', (e) => {
@@ -3117,12 +3174,10 @@
 
                 modal.querySelector('#uploadToGDrive').addEventListener('click', async () => {
                     modal.remove();
-                    this.elements.syncBtnText.textContent = '⏳ Uploading...';
+                    this.showNotification('⏳ Uploading to Google Drive...', 'info');
                     
                     const books = this.libraryManager.getAllBooks();
                     const result = await this.syncManager.syncToGoogleDrive(books);
-                    
-                    this.elements.syncBtnText.textContent = '🔄 Sync with Drive';
                     
                     if (result.success) {
                         this.showNotification(result.message, 'success');
@@ -3133,11 +3188,9 @@
 
                 modal.querySelector('#downloadFromGDrive').addEventListener('click', async () => {
                     modal.remove();
-                    this.elements.syncBtnText.textContent = '⏳ Downloading...';
+                    this.showNotification('⏳ Downloading from Google Drive...', 'info');
                     
                     const result = await this.syncManager.syncFromGoogleDrive();
-                    
-                    this.elements.syncBtnText.textContent = '🔄 Sync with Drive';
                     
                     if (result.success) {
                         // Merge the downloaded books with local library
@@ -3742,14 +3795,6 @@
                                 </span>
                                 <div class="toggle-switch ${this.isWakeLockEnabled ? 'active' : ''}" id="wakeLockSwitch"></div>
                             </div>
-                            
-                            <div class="settings-toggle" id="fullscreenToggle">
-                                <span class="settings-toggle-label">
-                                    <span>⛶</span>
-                                    <span>Fullscreen Mode</span>
-                                </span>
-                                <div class="toggle-switch ${this.isFullscreen ? 'active' : ''}" id="fullscreenSwitch"></div>
-                            </div>
                         </div>
                     </div>
                 `;
@@ -3898,14 +3943,6 @@
                     wakeLockSwitch.classList.toggle('active');
                 });
                 
-                // Fullscreen toggle
-                const fullscreenToggle = modal.querySelector('#fullscreenToggle');
-                fullscreenToggle.addEventListener('click', () => {
-                    this.toggleFullscreen();
-                    const fullscreenSwitch = modal.querySelector('#fullscreenSwitch');
-                    fullscreenSwitch.classList.toggle('active');
-                });
-                
                 // Close button
                 const closeBtn = modal.querySelector('#settingsCloseBtn');
                 closeBtn.addEventListener('click', () => {
@@ -3972,8 +4009,12 @@
                 
                 if (this.isFullscreen) {
                     this.elements.readerArea.classList.add('fullscreen');
+                    // Change icon to exit fullscreen
+                    this.elements.fullscreenIcon.innerHTML = '<path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" fill="currentColor"/>';
                 } else {
                     this.elements.readerArea.classList.remove('fullscreen');
+                    // Change icon to enter fullscreen
+                    this.elements.fullscreenIcon.innerHTML = '<path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" fill="currentColor"/>';
                 }
             }
 
