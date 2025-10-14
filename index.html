@@ -6,6 +6,8 @@
     <title>EPUB3 Media Overlay Reader</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://apis.google.com/js/api.js" async defer></script>
     <style>
         * {
             margin: 0;
@@ -1500,6 +1502,9 @@
                     <button class="file-upload-btn" id="addFromCloudBtn" style="background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%); box-shadow: 0 4px 15px rgba(6, 182, 212, 0.4);">
                         <span>☁️ Add from Cloud</span>
                     </button>
+                    <button class="file-upload-btn" id="syncBtn" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);">
+                        <span id="syncBtnText">🔄 Sync with Drive</span>
+                    </button>
                 </div>
             </div>
             
@@ -1610,6 +1615,314 @@
     <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
     <script>
         console.log('=== EPUB Reader Starting ===');
+        
+        // Google Drive Sync Manager
+        class GoogleDriveSyncManager {
+            constructor() {
+                this.CLIENT_ID = 'YOUR_CLIENT_ID'; // User needs to set this
+                this.API_KEY = 'YOUR_API_KEY'; // User needs to set this
+                this.DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
+                this.SCOPES = 'https://www.googleapis.com/auth/drive.file';
+                this.SYNC_FILENAME = 'epub-reader-library.json';
+                
+                this.tokenClient = null;
+                this.accessToken = null;
+                this.gapiInited = false;
+                this.gisInited = false;
+                this.fileId = null;
+            }
+
+            async initialize() {
+                // Check if user has configured API credentials
+                const storedClientId = localStorage.getItem('gdrive_client_id');
+                const storedApiKey = localStorage.getItem('gdrive_api_key');
+                
+                if (storedClientId) this.CLIENT_ID = storedClientId;
+                if (storedApiKey) this.API_KEY = storedApiKey;
+                
+                // Load the file ID if we've synced before
+                this.fileId = localStorage.getItem('gdrive_sync_file_id');
+                
+                // Initialize Google APIs
+                await this.initializeGoogleAPIs();
+            }
+
+            async initializeGoogleAPIs() {
+                return new Promise((resolve) => {
+                    // Wait for gapi to load
+                    const checkGapi = setInterval(() => {
+                        if (typeof gapi !== 'undefined') {
+                            clearInterval(checkGapi);
+                            gapi.load('client', async () => {
+                                await gapi.client.init({
+                                    apiKey: this.API_KEY,
+                                    discoveryDocs: [this.DISCOVERY_DOC],
+                                });
+                                this.gapiInited = true;
+                                resolve();
+                            });
+                        }
+                    }, 100);
+                    
+                    // Wait for google.accounts to load
+                    const checkGis = setInterval(() => {
+                        if (typeof google !== 'undefined' && google.accounts) {
+                            clearInterval(checkGis);
+                            this.tokenClient = google.accounts.oauth2.initTokenClient({
+                                client_id: this.CLIENT_ID,
+                                scope: this.SCOPES,
+                                callback: '', // defined later
+                            });
+                            this.gisInited = true;
+                        }
+                    }, 100);
+                });
+            }
+
+            async requestAccessToken() {
+                return new Promise((resolve, reject) => {
+                    try {
+                        this.tokenClient.callback = (response) => {
+                            if (response.error !== undefined) {
+                                reject(response);
+                            } else {
+                                this.accessToken = response.access_token;
+                                resolve(response);
+                            }
+                        };
+                        
+                        if (this.accessToken === null) {
+                            this.tokenClient.requestAccessToken({ prompt: 'consent' });
+                        } else {
+                            this.tokenClient.requestAccessToken({ prompt: '' });
+                        }
+                    } catch (err) {
+                        reject(err);
+                    }
+                });
+            }
+
+            async syncToGoogleDrive(libraryData) {
+                try {
+                    if (!this.gapiInited || !this.gisInited) {
+                        throw new Error('Google Drive API not initialized');
+                    }
+
+                    // Request access token if needed
+                    if (!this.accessToken) {
+                        await this.requestAccessToken();
+                    }
+
+                    const dataToSync = {
+                        books: libraryData,
+                        lastSync: new Date().toISOString(),
+                        version: 1
+                    };
+
+                    const content = JSON.stringify(dataToSync, null, 2);
+                    const blob = new Blob([content], { type: 'application/json' });
+
+                    // Check if file already exists
+                    if (this.fileId) {
+                        // Update existing file
+                        await this.updateFile(this.fileId, blob);
+                    } else {
+                        // Create new file
+                        this.fileId = await this.createFile(blob);
+                        localStorage.setItem('gdrive_sync_file_id', this.fileId);
+                    }
+
+                    return { success: true, message: 'Synced to Google Drive!' };
+                } catch (error) {
+                    console.error('Sync error:', error);
+                    return { success: false, error: error.message };
+                }
+            }
+
+            async syncFromGoogleDrive() {
+                try {
+                    if (!this.gapiInited || !this.gisInited) {
+                        throw new Error('Google Drive API not initialized');
+                    }
+
+                    // Request access token if needed
+                    if (!this.accessToken) {
+                        await this.requestAccessToken();
+                    }
+
+                    // Find the sync file
+                    if (!this.fileId) {
+                        this.fileId = await this.findSyncFile();
+                        if (this.fileId) {
+                            localStorage.setItem('gdrive_sync_file_id', this.fileId);
+                        }
+                    }
+
+                    if (!this.fileId) {
+                        return { success: false, error: 'No sync file found in Google Drive' };
+                    }
+
+                    // Download the file
+                    const response = await gapi.client.drive.files.get({
+                        fileId: this.fileId,
+                        alt: 'media'
+                    });
+
+                    const syncData = JSON.parse(response.body);
+                    return { success: true, data: syncData.books, lastSync: syncData.lastSync };
+                } catch (error) {
+                    console.error('Sync from Drive error:', error);
+                    return { success: false, error: error.message };
+                }
+            }
+
+            async createFile(blob) {
+                const metadata = {
+                    name: this.SYNC_FILENAME,
+                    mimeType: 'application/json',
+                };
+
+                const form = new FormData();
+                form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+                form.append('file', blob);
+
+                const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                    method: 'POST',
+                    headers: new Headers({ 'Authorization': 'Bearer ' + this.accessToken }),
+                    body: form,
+                });
+
+                const result = await response.json();
+                return result.id;
+            }
+
+            async updateFile(fileId, blob) {
+                const response = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+                    method: 'PATCH',
+                    headers: new Headers({
+                        'Authorization': 'Bearer ' + this.accessToken,
+                        'Content-Type': 'application/json'
+                    }),
+                    body: blob,
+                });
+
+                return await response.json();
+            }
+
+            async findSyncFile() {
+                const response = await gapi.client.drive.files.list({
+                    q: `name='${this.SYNC_FILENAME}' and trashed=false`,
+                    spaces: 'drive',
+                    fields: 'files(id, name)',
+                });
+
+                const files = response.result.files;
+                if (files && files.length > 0) {
+                    return files[0].id;
+                }
+                return null;
+            }
+
+            isConfigured() {
+                return this.CLIENT_ID !== 'YOUR_CLIENT_ID' && this.API_KEY !== 'YOUR_API_KEY';
+            }
+
+            showConfigDialog() {
+                const modal = document.createElement('div');
+                modal.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: rgba(0, 0, 0, 0.8);
+                    z-index: 2000;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 1rem;
+                `;
+
+                modal.innerHTML = `
+                    <div style="background: #1e293b; border-radius: 1rem; padding: 2rem; max-width: 600px; width: 100%; color: #f8fafc;">
+                        <h2 style="margin-bottom: 1rem; font-size: 1.5rem;">Configure Google Drive Sync</h2>
+                        <p style="margin-bottom: 1.5rem; color: #cbd5e1; font-size: 0.875rem;">
+                            To enable Google Drive sync, you need to create a Google Cloud project and get API credentials.
+                        </p>
+                        
+                        <div style="margin-bottom: 1rem;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">Client ID:</label>
+                            <input type="text" id="clientIdInput" placeholder="Your Google Client ID" 
+                                style="width: 100%; padding: 0.75rem; background: #0f172a; border: 1px solid #334155; border-radius: 0.5rem; color: #f8fafc; font-family: monospace; font-size: 0.875rem;" />
+                        </div>
+                        
+                        <div style="margin-bottom: 1.5rem;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-weight: 600;">API Key:</label>
+                            <input type="text" id="apiKeyInput" placeholder="Your Google API Key" 
+                                style="width: 100%; padding: 0.75rem; background: #0f172a; border: 1px solid #334155; border-radius: 0.5rem; color: #f8fafc; font-family: monospace; font-size: 0.875rem;" />
+                        </div>
+                        
+                        <details style="margin-bottom: 1.5rem; padding: 1rem; background: #0f172a; border-radius: 0.5rem;">
+                            <summary style="cursor: pointer; font-weight: 600; color: #3b82f6;">How to get API credentials</summary>
+                            <ol style="margin-top: 1rem; padding-left: 1.5rem; color: #cbd5e1; font-size: 0.875rem; line-height: 1.6;">
+                                <li>Go to <a href="https://console.cloud.google.com" target="_blank" style="color: #3b82f6;">Google Cloud Console</a></li>
+                                <li>Create a new project or select existing one</li>
+                                <li>Enable "Google Drive API"</li>
+                                <li>Go to "Credentials" and create:
+                                    <ul style="margin-top: 0.5rem; padding-left: 1rem;">
+                                        <li>OAuth 2.0 Client ID (Web application)</li>
+                                        <li>API Key</li>
+                                    </ul>
+                                </li>
+                                <li>Add your domain to authorized origins</li>
+                            </ol>
+                        </details>
+                        
+                        <div style="display: flex; gap: 0.5rem;">
+                            <button id="saveConfigBtn" style="flex: 1; background: #10b981; color: white; border: none; padding: 0.75rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer;">
+                                Save & Enable Sync
+                            </button>
+                            <button id="cancelConfigBtn" style="background: #334155; color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer;">
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+                document.body.appendChild(modal);
+
+                const clientIdInput = modal.querySelector('#clientIdInput');
+                const apiKeyInput = modal.querySelector('#apiKeyInput');
+                
+                // Load saved values if they exist
+                clientIdInput.value = localStorage.getItem('gdrive_client_id') || '';
+                apiKeyInput.value = localStorage.getItem('gdrive_api_key') || '';
+
+                modal.querySelector('#saveConfigBtn').addEventListener('click', () => {
+                    const clientId = clientIdInput.value.trim();
+                    const apiKey = apiKeyInput.value.trim();
+
+                    if (!clientId || !apiKey) {
+                        alert('Please enter both Client ID and API Key');
+                        return;
+                    }
+
+                    localStorage.setItem('gdrive_client_id', clientId);
+                    localStorage.setItem('gdrive_api_key', apiKey);
+                    
+                    this.CLIENT_ID = clientId;
+                    this.API_KEY = apiKey;
+                    
+                    modal.remove();
+                    alert('Configuration saved! Please refresh the page to enable sync.');
+                    location.reload();
+                });
+
+                modal.querySelector('#cancelConfigBtn').addEventListener('click', () => {
+                    modal.remove();
+                });
+            }
+        }
         
         // Library Manager
         class LibraryManager {
@@ -2051,6 +2364,7 @@
             constructor() {
                 console.log('Initializing EPUB Reader App');
                 this.libraryManager = new LibraryManager();
+                this.syncManager = new GoogleDriveSyncManager();
                 this.book = null;
                 this.currentBookId = null;
                 this.parser = new SMILParser();
@@ -2075,6 +2389,10 @@
                     coverImage: null
                 };
                 
+                // Initialize sync manager
+                this.syncManager.initialize().catch(err => {
+                    console.log('Sync manager init:', err);
+                });
                 this.initController();
                 this.initUI();
                 this.bindEvents();
@@ -2244,6 +2562,8 @@
                     libraryStats: document.getElementById('libraryStats'),
                     libraryEpubInput: document.getElementById('libraryEpubInput'),
                     addFromCloudBtn: document.getElementById('addFromCloudBtn'),
+                    syncBtn: document.getElementById('syncBtn'),
+                    syncBtnText: document.getElementById('syncBtnText'),
                     backToLibraryBtn: document.getElementById('backToLibraryBtn'),
                     viewer: document.getElementById('viewer'),
                     readerArea: document.getElementById('readerArea'),
@@ -2278,6 +2598,7 @@
             bindEvents() {
                 this.elements.libraryEpubInput.addEventListener('change', (e) => this.loadEPUBToLibrary(e));
                 this.elements.addFromCloudBtn.addEventListener('click', () => this.showCloudImportModal());
+                this.elements.syncBtn.addEventListener('click', () => this.handleSync());
                 this.elements.backToLibraryBtn.addEventListener('click', () => this.showLibrary());
                 this.elements.playBtn.addEventListener('click', () => this.togglePlay());
                 this.elements.prevBtn.addEventListener('click', () => this.previousSegment());
@@ -2605,6 +2926,117 @@
                     this.renderLibrary();
                     this.showNotification('Book removed from library', 'info');
                 }
+            }
+
+            async handleSync() {
+                // Check if sync is configured
+                if (!this.syncManager.isConfigured()) {
+                    this.syncManager.showConfigDialog();
+                    return;
+                }
+
+                // Show sync options modal
+                const modal = document.createElement('div');
+                modal.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: rgba(0, 0, 0, 0.8);
+                    z-index: 2000;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 1rem;
+                `;
+
+                modal.innerHTML = `
+                    <div style="background: #1e293b; border-radius: 1rem; padding: 2rem; max-width: 500px; width: 100%; color: #f8fafc;">
+                        <h2 style="margin-bottom: 1.5rem; font-size: 1.5rem;">🔄 Google Drive Sync</h2>
+                        
+                        <div style="display: flex; flex-direction: column; gap: 1rem;">
+                            <button id="uploadToGDrive" style="background: #10b981; color: white; border: none; padding: 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; font-size: 1rem;">
+                                ⬆️ Upload Library to Google Drive
+                            </button>
+                            
+                            <button id="downloadFromGDrive" style="background: #3b82f6; color: white; border: none; padding: 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; font-size: 1rem;">
+                                ⬇️ Download Library from Google Drive
+                            </button>
+                            
+                            <button id="configureSync" style="background: #64748b; color: white; border: none; padding: 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; font-size: 1rem;">
+                                ⚙️ Configure API Credentials
+                            </button>
+                            
+                            <button id="cancelSync" style="background: #334155; color: white; border: none; padding: 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; font-size: 1rem;">
+                                Cancel
+                            </button>
+                        </div>
+                        
+                        <p style="margin-top: 1.5rem; font-size: 0.875rem; color: #cbd5e1; padding: 1rem; background: #0f172a; border-radius: 0.5rem;">
+                            <strong>Note:</strong> This syncs your book list and reading progress only. EPUB files must be re-uploaded on each device or stored in cloud storage.
+                        </p>
+                    </div>
+                `;
+
+                document.body.appendChild(modal);
+
+                modal.querySelector('#uploadToGDrive').addEventListener('click', async () => {
+                    modal.remove();
+                    this.elements.syncBtnText.textContent = '⏳ Uploading...';
+                    
+                    const books = this.libraryManager.getAllBooks();
+                    const result = await this.syncManager.syncToGoogleDrive(books);
+                    
+                    this.elements.syncBtnText.textContent = '🔄 Sync with Drive';
+                    
+                    if (result.success) {
+                        this.showNotification(result.message, 'success');
+                    } else {
+                        this.showNotification('Sync failed: ' + result.error, 'error');
+                    }
+                });
+
+                modal.querySelector('#downloadFromGDrive').addEventListener('click', async () => {
+                    modal.remove();
+                    this.elements.syncBtnText.textContent = '⏳ Downloading...';
+                    
+                    const result = await this.syncManager.syncFromGoogleDrive();
+                    
+                    this.elements.syncBtnText.textContent = '🔄 Sync with Drive';
+                    
+                    if (result.success) {
+                        // Merge the downloaded books with local library
+                        const confirm = window.confirm(
+                            `Found library from ${new Date(result.lastSync).toLocaleString()}.\n\n` +
+                            `This will replace your current library. Continue?`
+                        );
+                        
+                        if (confirm) {
+                            // Replace local library with synced data
+                            result.data.forEach(book => {
+                                this.libraryManager.addBook(book, false);
+                            });
+                            this.renderLibrary();
+                            this.showNotification('Library synced from Google Drive!', 'success');
+                        }
+                    } else {
+                        this.showNotification('Sync failed: ' + result.error, 'error');
+                    }
+                });
+
+                modal.querySelector('#configureSync').addEventListener('click', () => {
+                    modal.remove();
+                    this.syncManager.showConfigDialog();
+                });
+
+                modal.querySelector('#cancelSync').addEventListener('click', () => {
+                    modal.remove();
+                });
+
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) modal.remove();
+                });
             }
 
             showCloudImportModal() {
