@@ -1,10 +1,10 @@
 const CACHE_NAME = 'epub-reader-v1';
 const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/icon-192.png',
-  '/icon-512.png',
+  './',
+  './index.html',
+  './manifest.json',
+  './icon-192.png',
+  './icon-512.png',
   'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
   'https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js',
   'https://accounts.google.com/gsi/client',
@@ -101,7 +101,7 @@ self.addEventListener('fetch', (event) => {
             
             // Return offline page if available
             if (event.request.mode === 'navigate') {
-              return caches.match('/');
+              return caches.match('./index.html');
             }
             
             throw error;
@@ -172,13 +172,13 @@ self.addEventListener('notificationclick', (event) => {
       .then((clientList) => {
         // If app is already open, focus it
         for (let client of clientList) {
-          if (client.url === '/' && 'focus' in client) {
+          if ('focus' in client) {
             return client.focus();
           }
         }
         // Otherwise open a new window
         if (clients.openWindow) {
-          return clients.openWindow('/');
+          return clients.openWindow('./');
         }
       })
   );
