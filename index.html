@@ -5163,7 +5163,7 @@
                 `;
 
                 const title = document.createElement('h2');
-                title.textContent = 'Audio Chapters';
+                title.textContent = 'Table of Contents';
                 title.style.cssText = `
                     color: #f8fafc;
                     font-size: 1.5rem;
@@ -5212,10 +5212,14 @@
                 for (let index = 0; index < this.overlayChapters.length; index++) {
                     const chapter = this.overlayChapters[index];
                     let chapterTitle = await this.extractChapterTitle(chapter);
+                    
+                    // Extract filename from href
+                    const filename = chapter.href.split('/').pop();
 
                     const item = document.createElement('button');
                     item.innerHTML = `
                         <div style="font-weight: 600;">${index + 1}. ${chapterTitle}</div>
+                        <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.25rem;">${filename}</div>
                     `;
                     item.style.cssText = `
                         background: #0f172a;
