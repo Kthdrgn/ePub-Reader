@@ -4770,7 +4770,16 @@
                     if (!fragmentMatch) return;
                     
                     const fragmentId = fragmentMatch[1];
-                    const element = this.elements.viewer.querySelector(`#${fragmentId}`);
+                    
+                    // Use CSS.escape to handle IDs with special characters like periods, colons, etc.
+                    let element;
+                    try {
+                        const escapedId = CSS.escape(fragmentId);
+                        element = this.elements.viewer.querySelector(`#${escapedId}`);
+                    } catch (e) {
+                        console.warn(`Could not find element with ID: ${fragmentId}`, e);
+                        return;
+                    }
                     
                     if (element) {
                         element.style.cursor = 'pointer';
@@ -5093,7 +5102,16 @@
                 if (!fragmentMatch) return;
 
                 const fragmentId = fragmentMatch[1];
-                const element = this.elements.viewer.querySelector(`#${fragmentId}`);
+                
+                // Use CSS.escape to handle IDs with special characters
+                let element;
+                try {
+                    const escapedId = CSS.escape(fragmentId);
+                    element = this.elements.viewer.querySelector(`#${escapedId}`);
+                } catch (e) {
+                    console.warn(`Could not find element with ID: ${fragmentId}`, e);
+                    return;
+                }
                 
                 if (element) {
                     this.clearHighlight();
