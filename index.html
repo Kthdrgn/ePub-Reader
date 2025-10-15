@@ -1830,10 +1830,22 @@
                         await this.requestAccessToken();
                     }
 
+                    // Prepare sync data with metadata for each book
+                    const booksWithMetadata = libraryData.map(book => ({
+                        ...book,
+                        syncedAt: new Date().toISOString(),
+                        deleted: false // Mark as not deleted
+                    }));
+
+                    // Get deleted books from localStorage
+                    const deletedBooks = JSON.parse(localStorage.getItem('deleted_books') || '[]');
+
                     const dataToSync = {
-                        books: libraryData,
+                        books: booksWithMetadata,
+                        deletedBooks: deletedBooks, // Track deleted books
                         lastSync: new Date().toISOString(),
-                        version: 1
+                        deviceId: this.getDeviceId(),
+                        version: 2 // Increment version for new sync format
                     };
 
                     const content = JSON.stringify(dataToSync, null, 2);
@@ -1867,6 +1879,90 @@
                 }
             }
 
+            getDeviceId() {
+                // Get or create a unique device ID
+                let deviceId = localStorage.getItem('device_id');
+                if (!deviceId) {
+                    deviceId = 'device_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+                    localStorage.setItem('device_id', deviceId);
+                }
+                return deviceId;
+            }
+
+            mergeLibraries(localBooks, remoteBooks, remoteDeletedBooks = []) {
+                console.log(`🔄 Merging libraries: ${localBooks.length} local books, ${remoteBooks.length} remote books, ${remoteDeletedBooks.length} deleted books`);
+                
+                // Create a map of remote books by ID for quick lookup
+                const remoteBookMap = new Map(remoteBooks.map(book => [book.id, book]));
+                const remoteDeletedIds = new Set(remoteDeletedBooks.map(b => b.id));
+                const localBookMap = new Map(localBooks.map(book => [book.id, book]));
+                
+                const mergedBooks = [];
+                const seenIds = new Set();
+
+                // Process local books
+                for (const localBook of localBooks) {
+                    seenIds.add(localBook.id);
+                    
+                    // If book was deleted remotely, skip it
+                    if (remoteDeletedIds.has(localBook.id)) {
+                        console.log(`❌ Removing "${localBook.title}" (deleted on another device)`);
+                        continue;
+                    }
+
+                    // If book exists remotely, merge it
+                    if (remoteBookMap.has(localBook.id)) {
+                        const remoteBook = remoteBookMap.get(localBook.id);
+                        
+                        // Merge using the most recent data
+                        const mergedBook = this.mergeBookData(localBook, remoteBook);
+                        mergedBooks.push(mergedBook);
+                    } else {
+                        // Local-only book, keep it
+                        console.log(`📱 Keeping local-only book: "${localBook.title}"`);
+                        mergedBooks.push(localBook);
+                    }
+                }
+
+                // Add remote books that don't exist locally
+                for (const remoteBook of remoteBooks) {
+                    if (!seenIds.has(remoteBook.id) && !remoteDeletedIds.has(remoteBook.id)) {
+                        console.log(`☁️ Adding remote book: "${remoteBook.title}"`);
+                        mergedBooks.push(remoteBook);
+                    }
+                }
+
+                console.log(`✓ Merge complete: ${mergedBooks.length} books in final library`);
+                return mergedBooks;
+            }
+
+            mergeBookData(localBook, remoteBook) {
+                // Use the most recent progress
+                const localLastRead = new Date(localBook.lastRead || 0).getTime();
+                const remoteLastRead = new Date(remoteBook.lastRead || 0).getTime();
+                
+                // Start with local book data
+                const merged = { ...localBook };
+                
+                // If remote is more recent, use remote progress
+                if (remoteLastRead > localLastRead) {
+                    console.log(`Using remote progress for ${localBook.title} (remote: ${new Date(remoteLastRead).toLocaleString()}, local: ${new Date(localLastRead).toLocaleString()})`);
+                    merged.progress = remoteBook.progress;
+                    merged.lastRead = remoteBook.lastRead;
+                    merged.syncedAt = remoteBook.syncedAt;
+                } else if (localLastRead > remoteLastRead) {
+                    // Local is more recent, keep local progress
+                    console.log(`Keeping local progress for ${localBook.title} (local: ${new Date(localLastRead).toLocaleString()}, remote: ${new Date(remoteLastRead).toLocaleString()})`);
+                    merged.syncedAt = new Date().toISOString();
+                } else {
+                    // Same time or no timestamps, keep local but update sync time
+                    console.log(`No difference in progress for ${localBook.title}`);
+                    merged.syncedAt = new Date().toISOString();
+                }
+                
+                return merged;
+            }
+
             async syncFromGoogleDrive() {
                 try {
                     if (!this.gapiInited || !this.gisInited) {
@@ -1897,7 +1993,14 @@
                     });
 
                     const syncData = JSON.parse(response.body);
-                    return { success: true, data: syncData.books, lastSync: syncData.lastSync };
+                    
+                    return { 
+                        success: true, 
+                        data: syncData.books, 
+                        deletedBooks: syncData.deletedBooks || [],
+                        lastSync: syncData.lastSync,
+                        version: syncData.version || 1
+                    };
                 } catch (error) {
                     console.error('Sync from Drive error:', error);
                     return { success: false, error: error.message };
@@ -2070,15 +2173,45 @@
                     return;
                 }
 
-                // Sync every 5 minutes
+                // Sync every 5 minutes using two-way sync
                 this.syncInterval = setInterval(async () => {
-                    console.log('Auto-syncing to Google Drive...');
-                    const books = libraryManager.getAllBooks();
-                    const result = await this.syncToGoogleDrive(books);
-                    if (result.success) {
-                        console.log('Auto-sync successful');
-                    } else {
-                        console.error('Auto-sync failed:', result.error);
+                    console.log('Auto-syncing (two-way)...');
+                    
+                    try {
+                        // Download remote data
+                        const downloadResult = await this.syncFromGoogleDrive();
+                        
+                        if (downloadResult.success) {
+                            // Merge with local
+                            const localBooks = libraryManager.getAllBooks();
+                            const remoteBooks = downloadResult.data || [];
+                            const remoteDeletedBooks = downloadResult.deletedBooks || [];
+                            
+                            const mergedBooks = this.mergeLibraries(
+                                localBooks, 
+                                remoteBooks, 
+                                remoteDeletedBooks
+                            );
+                            
+                            // Update local library
+                            libraryManager.books = [];
+                            mergedBooks.forEach(book => {
+                                libraryManager.addBook(book, false);
+                            });
+                            
+                            // Upload merged result
+                            await this.syncToGoogleDrive(mergedBooks);
+                            console.log('✓ Auto-sync successful (two-way)');
+                        } else {
+                            // No remote data, just upload
+                            const books = libraryManager.getAllBooks();
+                            const result = await this.syncToGoogleDrive(books);
+                            if (result.success) {
+                                console.log('✓ Auto-sync successful (upload only)');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Auto-sync failed:', error);
                     }
                 }, 5 * 60 * 1000); // 5 minutes
             }
@@ -2273,8 +2406,31 @@
                     this.books = [];
                     return;
                 }
+                
+                // Find the book before removing it
+                const book = this.books.find(b => b.id === bookId);
+                
+                // Remove from books array
                 this.books = this.books.filter(b => b.id !== bookId);
                 this.saveToStorage();
+                
+                // Track deletion for sync
+                if (book) {
+                    const deletedBooks = JSON.parse(localStorage.getItem('deleted_books') || '[]');
+                    deletedBooks.push({
+                        id: book.id,
+                        title: book.title,
+                        deletedAt: new Date().toISOString()
+                    });
+                    
+                    // Keep only last 100 deletions to avoid storage bloat
+                    if (deletedBooks.length > 100) {
+                        deletedBooks.splice(0, deletedBooks.length - 100);
+                    }
+                    
+                    localStorage.setItem('deleted_books', JSON.stringify(deletedBooks));
+                    console.log(`Tracked deletion of: ${book.title}`);
+                }
             }
 
             getBook(bookId) {
@@ -3257,12 +3413,16 @@
                         </div>
                         
                         <div style="display: flex; flex-direction: column; gap: 1rem;">
+                            <button id="twoWaySync" style="background: #8b5cf6; color: white; border: none; padding: 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+                                🔄 Two-Way Sync (Recommended)
+                            </button>
+                            
                             <button id="uploadToGDrive" style="background: #10b981; color: white; border: none; padding: 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; font-size: 1rem;">
-                                ⬆️ Upload Library to Google Drive
+                                ⬆️ Upload to Google Drive
                             </button>
                             
                             <button id="downloadFromGDrive" style="background: #3b82f6; color: white; border: none; padding: 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; font-size: 1rem;">
-                                ⬇️ Download Library from Google Drive
+                                ⬇️ Download from Google Drive
                             </button>
                             
                             <button id="configureSync" style="background: #64748b; color: white; border: none; padding: 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; font-size: 1rem;">
@@ -3275,7 +3435,7 @@
                         </div>
                         
                         <p style="margin-top: 1.5rem; font-size: 0.875rem; color: #cbd5e1; padding: 1rem; background: #0f172a; border-radius: 0.5rem;">
-                            <strong>Note:</strong> This syncs your book list and reading progress only. EPUB files must be re-uploaded on each device or stored in cloud storage.
+                            <strong>💡 Tip:</strong> Use Two-Way Sync to automatically merge changes from all devices. Deleted books and progress updates sync correctly!
                         </p>
                     </div>
                 `;
@@ -3294,40 +3454,155 @@
                     });
                 }
 
+                // Two-way sync handler (recommended)
+                modal.querySelector('#twoWaySync').addEventListener('click', async () => {
+                    modal.remove();
+                    this.showNotification('🔄 Starting two-way sync...', 'info');
+                    
+                    try {
+                        // First, download remote data
+                        const downloadResult = await this.syncManager.syncFromGoogleDrive();
+                        
+                        if (downloadResult.success) {
+                            // Merge with local
+                            const localBooks = this.libraryManager.getAllBooks();
+                            const remoteBooks = downloadResult.data || [];
+                            const remoteDeletedBooks = downloadResult.deletedBooks || [];
+                            
+                            const mergedBooks = this.syncManager.mergeLibraries(
+                                localBooks, 
+                                remoteBooks, 
+                                remoteDeletedBooks
+                            );
+                            
+                            // Update local library
+                            this.libraryManager.books = [];
+                            mergedBooks.forEach(book => {
+                                this.libraryManager.addBook(book, false);
+                            });
+                            
+                            // Now upload the merged result
+                            const uploadResult = await this.syncManager.syncToGoogleDrive(mergedBooks);
+                            
+                            if (uploadResult.success) {
+                                this.renderLibrary();
+                                this.showNotification('✓ Two-way sync complete! All devices now in sync.', 'success');
+                            } else {
+                                this.showNotification('⚠️ Merge successful but upload failed: ' + uploadResult.error, 'error');
+                            }
+                        } else {
+                            // No remote data yet, just upload
+                            const books = this.libraryManager.getAllBooks();
+                            const uploadResult = await this.syncManager.syncToGoogleDrive(books);
+                            
+                            if (uploadResult.success) {
+                                this.showNotification('✓ Uploaded to Google Drive (first sync)', 'success');
+                            } else {
+                                this.showNotification('Sync failed: ' + uploadResult.error, 'error');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Two-way sync error:', error);
+                        this.showNotification('Sync failed: ' + error.message, 'error');
+                    }
+                });
+
                 modal.querySelector('#uploadToGDrive').addEventListener('click', async () => {
                     modal.remove();
-                    this.showNotification('⏳ Uploading to Google Drive...', 'info');
+                    this.showNotification('⏳ Syncing to Google Drive...', 'info');
                     
-                    const books = this.libraryManager.getAllBooks();
-                    const result = await this.syncManager.syncToGoogleDrive(books);
-                    
-                    if (result.success) {
-                        this.showNotification(result.message, 'success');
-                    } else {
-                        this.showNotification('Sync failed: ' + result.error, 'error');
+                    try {
+                        // First, download remote data
+                        const downloadResult = await this.syncManager.syncFromGoogleDrive();
+                        
+                        let booksToUpload;
+                        
+                        if (downloadResult.success) {
+                            // Merge local with remote
+                            const localBooks = this.libraryManager.getAllBooks();
+                            const remoteBooks = downloadResult.data || [];
+                            const remoteDeletedBooks = downloadResult.deletedBooks || [];
+                            
+                            // Perform smart merge
+                            const mergedBooks = this.syncManager.mergeLibraries(
+                                localBooks, 
+                                remoteBooks, 
+                                remoteDeletedBooks
+                            );
+                            
+                            // Update local library with merged data
+                            this.libraryManager.books = [];
+                            mergedBooks.forEach(book => {
+                                this.libraryManager.addBook(book, false);
+                            });
+                            
+                            booksToUpload = mergedBooks;
+                            this.renderLibrary();
+                        } else {
+                            // No remote data exists yet, just upload local
+                            booksToUpload = this.libraryManager.getAllBooks();
+                        }
+                        
+                        // Now upload the merged data
+                        const result = await this.syncManager.syncToGoogleDrive(booksToUpload);
+                        
+                        if (result.success) {
+                            this.showNotification('✓ Synced to Google Drive!', 'success');
+                        } else {
+                            this.showNotification('Sync failed: ' + result.error, 'error');
+                        }
+                    } catch (error) {
+                        console.error('Sync error:', error);
+                        this.showNotification('Sync failed: ' + error.message, 'error');
                     }
                 });
 
                 modal.querySelector('#downloadFromGDrive').addEventListener('click', async () => {
                     modal.remove();
-                    this.showNotification('⏳ Downloading from Google Drive...', 'info');
+                    this.showNotification('⏳ Syncing from Google Drive...', 'info');
                     
                     const result = await this.syncManager.syncFromGoogleDrive();
                     
                     if (result.success) {
-                        // Merge the downloaded books with local library
-                        const confirm = window.confirm(
-                            `Found library from ${new Date(result.lastSync).toLocaleString()}.\n\n` +
-                            `This will replace your current library. Continue?`
+                        // Smart merge with local library
+                        const localBooks = this.libraryManager.getAllBooks();
+                        const remoteBooks = result.data || [];
+                        const remoteDeletedBooks = result.deletedBooks || [];
+                        
+                        // Perform smart merge
+                        const mergedBooks = this.syncManager.mergeLibraries(
+                            localBooks, 
+                            remoteBooks, 
+                            remoteDeletedBooks
                         );
                         
-                        if (confirm) {
-                            // Replace local library with synced data
-                            result.data.forEach(book => {
+                        // Show what will happen
+                        const added = mergedBooks.filter(mb => !localBooks.find(lb => lb.id === mb.id)).length;
+                        const updated = mergedBooks.filter(mb => {
+                            const local = localBooks.find(lb => lb.id === mb.id);
+                            return local && (local.lastRead !== mb.lastRead || 
+                                   JSON.stringify(local.progress) !== JSON.stringify(mb.progress));
+                        }).length;
+                        const removed = remoteDeletedBooks.length;
+                        
+                        let message = `Sync from ${new Date(result.lastSync).toLocaleString()}\n\n`;
+                        if (added > 0) message += `• ${added} book(s) will be added\n`;
+                        if (updated > 0) message += `• ${updated} book(s) will be updated\n`;
+                        if (removed > 0) message += `• ${removed} book(s) will be removed\n`;
+                        if (added === 0 && updated === 0 && removed === 0) {
+                            message += `• Everything is already in sync!\n`;
+                        }
+                        message += '\nContinue?';
+                        
+                        if (window.confirm(message)) {
+                            // Clear local library and add merged books
+                            this.libraryManager.books = [];
+                            mergedBooks.forEach(book => {
                                 this.libraryManager.addBook(book, false);
                             });
+                            
                             this.renderLibrary();
-                            this.showNotification('Library synced from Google Drive!', 'success');
+                            this.showNotification(`✓ Library synced! ${added} added, ${updated} updated, ${removed} removed`, 'success');
                         }
                     } else {
                         this.showNotification('Sync failed: ' + result.error, 'error');
