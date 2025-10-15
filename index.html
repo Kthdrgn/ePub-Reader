@@ -1983,27 +1983,55 @@
                     }
 
                     if (!this.fileId) {
-                        return { success: false, error: 'No sync file found in Google Drive' };
+                        return { success: false, error: 'No sync file found in Google Drive', needsFirstSync: true };
                     }
 
                     // Download the file
-                    const response = await gapi.client.drive.files.get({
-                        fileId: this.fileId,
-                        alt: 'media'
-                    });
+                    try {
+                        const response = await gapi.client.drive.files.get({
+                            fileId: this.fileId,
+                            alt: 'media'
+                        });
 
-                    const syncData = JSON.parse(response.body);
-                    
-                    return { 
-                        success: true, 
-                        data: syncData.books, 
-                        deletedBooks: syncData.deletedBooks || [],
-                        lastSync: syncData.lastSync,
-                        version: syncData.version || 1
-                    };
+                        const syncData = JSON.parse(response.body);
+                        
+                        return { 
+                            success: true, 
+                            data: syncData.books, 
+                            deletedBooks: syncData.deletedBooks || [],
+                            lastSync: syncData.lastSync,
+                            version: syncData.version || 1
+                        };
+                    } catch (fileError) {
+                        // Check if it's a 404 (file not found)
+                        if (fileError.status === 404 || (fileError.result && fileError.result.error && fileError.result.error.code === 404)) {
+                            console.warn('Sync file not found (404), clearing stored file ID');
+                            // Clear the invalid file ID
+                            this.fileId = null;
+                            localStorage.removeItem('gdrive_sync_file_id');
+                            return { 
+                                success: false, 
+                                error: 'Sync file not found. It may have been deleted. Create a new sync file by uploading your library.',
+                                needsFirstSync: true,
+                                errorCode: 404
+                            };
+                        }
+                        throw fileError;
+                    }
                 } catch (error) {
                     console.error('Sync from Drive error:', error);
-                    return { success: false, error: error.message };
+                    
+                    // Check for authentication errors
+                    if (error.status === 401 || error.status === 403) {
+                        this.clearSavedAuth();
+                        return { 
+                            success: false, 
+                            error: 'Authentication expired. Please sign in again.',
+                            needsAuth: true
+                        };
+                    }
+                    
+                    return { success: false, error: error.message || 'Unknown error occurred' };
                 }
             }
 
@@ -3429,6 +3457,10 @@
                                 ⚙️ Configure API Credentials
                             </button>
                             
+                            <button id="resetSync" style="background: #f59e0b; color: white; border: none; padding: 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; font-size: 1rem;">
+                                🔄 Reset Sync (Fix Errors)
+                            </button>
+                            
                             <button id="cancelSync" style="background: #334155; color: white; border: none; padding: 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; font-size: 1rem;">
                                 Cancel
                             </button>
@@ -3538,9 +3570,13 @@
                             
                             booksToUpload = mergedBooks;
                             this.renderLibrary();
-                        } else {
-                            // No remote data exists yet, just upload local
+                        } else if (downloadResult.needsFirstSync || downloadResult.errorCode === 404) {
+                            // No remote file yet or file was deleted - just upload local
+                            console.log('Creating first sync file or replacing deleted one');
                             booksToUpload = this.libraryManager.getAllBooks();
+                        } else {
+                            // Other error - show it and abort
+                            throw new Error(downloadResult.error);
                         }
                         
                         // Now upload the merged data
@@ -3605,7 +3641,16 @@
                             this.showNotification(`✓ Library synced! ${added} added, ${updated} updated, ${removed} removed`, 'success');
                         }
                     } else {
-                        this.showNotification('Sync failed: ' + result.error, 'error');
+                        // Show appropriate error message
+                        if (result.errorCode === 404) {
+                            this.showNotification('⚠️ Sync file not found. Click "Reset Sync" to fix this, then use "Upload" to create a new sync file.', 'error');
+                        } else if (result.needsAuth) {
+                            this.showNotification('🔐 ' + result.error, 'error');
+                        } else if (result.needsFirstSync) {
+                            this.showNotification('📤 No sync file yet. Use "Upload" or "Two-Way Sync" to create one.', 'info');
+                        } else {
+                            this.showNotification('Sync failed: ' + result.error, 'error');
+                        }
                     }
                 });
 
@@ -3632,6 +3677,19 @@
                 modal.querySelector('#configureSync').addEventListener('click', () => {
                     modal.remove();
                     this.syncManager.showConfigDialog();
+                });
+
+                modal.querySelector('#resetSync').addEventListener('click', () => {
+                    if (confirm('This will reset your Google Drive sync connection.\n\nYour local library will NOT be deleted, but you\'ll need to sync again.\n\nContinue?')) {
+                        // Clear sync data
+                        localStorage.removeItem('gdrive_sync_file_id');
+                        localStorage.removeItem('deleted_books');
+                        localStorage.removeItem('last_sync_time');
+                        this.syncManager.fileId = null;
+                        
+                        modal.remove();
+                        this.showNotification('✓ Sync reset! Use "Upload" or "Two-Way Sync" to create a fresh sync file.', 'success');
+                    }
                 });
 
                 modal.querySelector('#cancelSync').addEventListener('click', () => {
