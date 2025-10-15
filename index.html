@@ -1851,14 +1851,27 @@
                     const content = JSON.stringify(dataToSync, null, 2);
                     const blob = new Blob([content], { type: 'application/json' });
 
+                    // If we don't have a file ID, try to find existing file
+                    if (!this.fileId) {
+                        console.log('No file ID stored, searching for existing sync file...');
+                        this.fileId = await this.findSyncFile();
+                        if (this.fileId) {
+                            console.log(`✓ Found existing sync file: ${this.fileId}`);
+                            localStorage.setItem('gdrive_sync_file_id', this.fileId);
+                        }
+                    }
+
                     // Check if file already exists
                     if (this.fileId) {
                         // Update existing file
+                        console.log(`Updating existing sync file: ${this.fileId}`);
                         await this.updateFile(this.fileId, blob);
                     } else {
-                        // Create new file
+                        // Create new file only if none exists
+                        console.log('Creating new sync file...');
                         this.fileId = await this.createFile(blob);
                         localStorage.setItem('gdrive_sync_file_id', this.fileId);
+                        console.log(`✓ Created new sync file: ${this.fileId}`);
                     }
 
                     // Update last sync time
