@@ -4662,8 +4662,18 @@
 
                     const chapterTitle = await this.extractChapterTitle(spineItem);
                     
+                    // Extract filename from href
+                    const filename = spineItem.href.split('/').pop();
+                    
+                    // Display title with filename below
+                    this.elements.bookChapter.innerHTML = `
+                        <div style="line-height: 1.4;">
+                            <div>${chapterTitle}</div>
+                            <div style="font-size: 0.75em; color: #94a3b8; margin-top: 2px;">${filename}</div>
+                        </div>
+                    `;
+                    
                     this.elements.statusBar.style.display = 'flex';
-                    this.elements.bookChapter.textContent = chapterTitle;
                     this.elements.playBtn.disabled = false;
                     this.elements.prevBtn.disabled = false;
                     this.elements.nextBtn.disabled = false;
