@@ -9,8 +9,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="EPUB Reader">
-    <link rel="manifest" href="./manifest.json">
-    <link rel="apple-touch-icon" href="./icon-192.png">
+    <!-- <link rel="manifest" href="./manifest.json"> -->
+    <!-- <link rel="apple-touch-icon" href="./icon-192.png"> -->
     <title>EPUB3 Media Overlay Reader</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
@@ -2411,6 +2411,7 @@
                     coverImage: bookData.coverImage,
                     filePath: bookData.filePath || (existingBook ? existingBook.filePath : null),
                     fileMetadata: bookData.fileMetadata || (existingBook ? existingBook.fileMetadata : null),
+                    hasMediaOverlay: bookData.hasMediaOverlay !== undefined ? bookData.hasMediaOverlay : (existingBook ? existingBook.hasMediaOverlay : false),
                     addedDate: bookData.addedDate || (existingBook ? existingBook.addedDate : new Date().toISOString()),
                     lastRead: bookData.lastRead || (existingBook ? existingBook.lastRead : null),
                     // IMPORTANT: Preserve existing progress if book exists, otherwise use provided progress
@@ -2785,6 +2786,8 @@
                 this.sleepTimer = null;
                 this.sleepTimerMinutes = 0;
                 this.sleepTimerEndTime = null;
+                this.hasMediaOverlay = false;
+                this.rendition = null;
                 this.bookMetadata = {
                     title: 'EPUB Book',
                     author: 'Unknown Author',
@@ -3088,6 +3091,10 @@
             renderLibrary() {
                 const books = this.libraryManager.getAllBooks();
                 
+                // Separate books by media overlay presence
+                const booksWithMedia = books.filter(book => book.hasMediaOverlay === true);
+                const booksWithoutMedia = books.filter(book => book.hasMediaOverlay !== true);
+                
                 this.elements.libraryStats.textContent = `${books.length} book${books.length !== 1 ? 's' : ''}`;
                 
                 if (books.length === 0) {
@@ -3096,51 +3103,39 @@
                 } else {
                     this.elements.emptyLibrary.style.display = 'none';
                     
-                    this.elements.libraryGrid.innerHTML = books.map(book => `
-                        <div class="book-card" data-book-id="${book.id}">
-                            <div class="book-card-cover">
-                                ${book.coverImage ? 
-                                    `<img src="${book.coverImage}" alt="${book.title}" />` : 
-                                    '📖'
-                                }
-                                ${book.source === 'cloud' ? 
-                                    `<div class="cloud-icon-badge">☁️ Cloud</div>` : 
-                                    ''
-                                }
-                                ${book.isCached ? 
-                                    `<div style="position: absolute; top: 0.5rem; left: 0.5rem; background: rgba(16, 185, 129, 0.9); color: white; padding: 0.25rem 0.5rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 600;">Cached</div>` : 
-                                    book.source === 'cloud' ? 
-                                        `<div style="position: absolute; top: 0.5rem; left: 0.5rem; background: rgba(0, 0, 0, 0.7); color: white; padding: 0.25rem 0.5rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 600;">☁️ Auto-download</div>` :
-                                        `<div style="position: absolute; top: 0.5rem; left: 0.5rem; background: rgba(0, 0, 0, 0.7); color: white; padding: 0.25rem 0.5rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 600;">🔄 Re-upload needed</div>`
-                                }
-                                <div class="book-card-progress">
-                                    <div class="book-card-progress-bar" style="width: ${book.progress?.percentage || 0}%"></div>
-                                </div>
+                    let libraryHTML = '';
+                    
+                    // Add section for books with media overlays
+                    if (booksWithMedia.length > 0) {
+                        libraryHTML += `
+                            <div style="grid-column: 1 / -1; margin-bottom: 1rem; margin-top: 1rem;">
+                                <h2 style="color: var(--text-primary); font-size: 1.5rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem;">
+                                    <span>🎧</span>
+                                    <span>Audiobooks with Media Sync</span>
+                                    <span style="font-size: 0.875rem; font-weight: 400; color: var(--text-secondary);">(${booksWithMedia.length})</span>
+                                </h2>
                             </div>
-                            <div class="book-card-info">
-                                <div class="book-card-title">${book.title}</div>
-                                <div class="book-card-author">${book.author}</div>
-                                ${book.filePath ? 
-                                    `<div class="book-card-path" title="${book.filePath}${book.fileMetadata ? '\nSize: ' + this.formatFileSize(book.fileMetadata.size) : ''}">📁 ${book.filePath}${book.fileMetadata && book.fileMetadata.size ? ' (' + this.formatFileSize(book.fileMetadata.size) + ')' : ''}</div>` : 
-                                    book.source === 'cloud' && book.cloudUrl ? 
-                                        `<div class="book-card-path" title="${book.cloudUrl}">☁️ Cloud file</div>` :
-                                        `<div class="book-card-path" style="opacity: 0.5;">📁 Path not saved</div>`
-                                }
-                                <div class="book-card-meta">
-                                    <span>${book.progress?.percentage || 0}%</span>
-                                    ${book.lastRead ? 
-                                        `<span>${this.formatLastRead(book.lastRead)}</span>` : 
-                                        `<span>Not started</span>`
-                                    }
-                                </div>
+                        `;
+                        
+                        libraryHTML += booksWithMedia.map(book => this.renderBookCard(book)).join('');
+                    }
+                    
+                    // Add section for regular ebooks
+                    if (booksWithoutMedia.length > 0) {
+                        libraryHTML += `
+                            <div style="grid-column: 1 / -1; margin-bottom: 1rem; margin-top: ${booksWithMedia.length > 0 ? '2rem' : '1rem'};">
+                                <h2 style="color: var(--text-primary); font-size: 1.5rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem;">
+                                    <span>📚</span>
+                                    <span>Regular Ebooks</span>
+                                    <span style="font-size: 0.875rem; font-weight: 400; color: var(--text-secondary);">(${booksWithoutMedia.length})</span>
+                                </h2>
                             </div>
-                            <div class="book-card-actions">
-                                <button class="book-card-action-btn" data-action="remove" data-book-id="${book.id}" title="Remove from library">
-                                    ✕
-                                </button>
-                            </div>
-                        </div>
-                    `).join('');
+                        `;
+                        
+                        libraryHTML += booksWithoutMedia.map(book => this.renderBookCard(book)).join('');
+                    }
+                    
+                    this.elements.libraryGrid.innerHTML = libraryHTML;
                     
                     // Add event listeners to book cards
                     this.elements.libraryGrid.querySelectorAll('.book-card').forEach(card => {
@@ -3157,6 +3152,48 @@
                         });
                     });
                 }
+            }
+            
+            renderBookCard(book) {
+                return `
+                    <div class="book-card" data-book-id="${book.id}">
+                        <div class="book-card-cover">
+                            ${book.coverImage ? 
+                                `<img src="${book.coverImage}" alt="${book.title}" />` : 
+                                '📖'
+                            }
+                            ${book.source === 'cloud' ? 
+                                `<div class="cloud-icon-badge">☁️ Cloud</div>` : 
+                                ''
+                            }
+                            ${book.isCached ? 
+                                `<div style="position: absolute; top: 0.5rem; left: 0.5rem; background: rgba(16, 185, 129, 0.9); color: white; padding: 0.25rem 0.5rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 600;">Cached</div>` : 
+                                book.source === 'cloud' ? 
+                                    `<div style="position: absolute; top: 0.5rem; left: 0.5rem; background: rgba(0, 0, 0, 0.7); color: white; padding: 0.25rem 0.5rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 600;">☁️ Auto-download</div>` :
+                                    `<div style="position: absolute; top: 0.5rem; left: 0.5rem; background: rgba(0, 0, 0, 0.7); color: white; padding: 0.25rem 0.5rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 600;">🔄 Re-upload needed</div>`
+                            }
+                            <div class="book-card-progress">
+                                <div class="book-card-progress-bar" style="width: ${book.progress?.percentage || 0}%"></div>
+                            </div>
+                        </div>
+                        <div class="book-card-info">
+                            <div class="book-card-title">${book.title}</div>
+                            <div class="book-card-author">${book.author}</div>
+                            <div class="book-card-meta">
+                                <span>${book.progress?.percentage || 0}%</span>
+                                ${book.lastRead ? 
+                                    `<span>${this.formatLastRead(book.lastRead)}</span>` : 
+                                    `<span>Not started</span>`
+                                }
+                            </div>
+                        </div>
+                        <div class="book-card-actions">
+                            <button class="book-card-action-btn" data-action="remove" data-book-id="${book.id}" title="Remove from library">
+                                ✕
+                            </button>
+                        </div>
+                    </div>
+                `;
             }
 
             formatLastRead(dateString) {
@@ -3209,6 +3246,42 @@
                 this.elements.readerView.classList.add('active');
             }
 
+            async detectMediaOverlay(book) {
+                try {
+                    await book.loaded.spine;
+                    await book.loaded.manifest;
+                    
+                    // First check: Look for media-overlay references in spine items
+                    for (const item of book.spine.items) {
+                        const manifestItem = book.packaging.manifest[item.idref || item.id];
+                        if (manifestItem && manifestItem['media-overlay']) {
+                            return true;
+                        }
+                    }
+                    
+                    // Second check: Look for SMIL files in the manifest
+                    const manifest = book.packaging.manifest;
+                    for (const [id, item] of Object.entries(manifest)) {
+                        if (item['media-type'] === 'application/smil+xml' || 
+                            (item.href && item.href.endsWith('.smil'))) {
+                            return true;
+                        }
+                    }
+                    
+                    // Third check: Look for media-overlay in manifest items
+                    for (const [id, item] of Object.entries(manifest)) {
+                        if (item['media-overlay']) {
+                            return true;
+                        }
+                    }
+                    
+                    return false;
+                } catch (e) {
+                    console.log('Error detecting media overlay:', e);
+                    return false;
+                }
+            }
+
             async loadEPUBToLibrary(e) {
                 const file = e.target.files[0];
                 if (!file) return;
@@ -3224,6 +3297,9 @@
                     await book.loaded.metadata;
                     const title = book.packaging.metadata.title || file.name;
                     const author = book.packaging.metadata.creator || 'Unknown Author';
+                    
+                    // Check for media overlays using comprehensive detection
+                    const hasMediaOverlay = await this.detectMediaOverlay(book);
                     
                     // Store file metadata
                     const fileMetadata = {
@@ -3294,6 +3370,7 @@
                         coverImage: coverImage,
                         filePath: file.name, // Store the file name
                         fileMetadata: fileMetadata, // Store additional file info
+                        hasMediaOverlay: hasMediaOverlay, // Store media overlay status
                         addedDate: new Date().toISOString(),
                         lastRead: null,
                         progress: {
@@ -3307,7 +3384,12 @@
                     try {
                         this.libraryManager.addBook(bookData, false); // false = don't cache file data
                         this.renderLibrary();
-                        this.showNotification('Book added to library!', 'success');
+                        
+                        if (hasMediaOverlay) {
+                            this.showNotification('Audiobook with media sync added!', 'success');
+                        } else {
+                            this.showNotification('Ebook added to library!', 'success');
+                        }
                     } catch (storageError) {
                         if (storageError.name === 'QuotaExceededError') {
                             // Try without cover image
@@ -3840,6 +3922,9 @@
                     const title = book.packaging.metadata.title || 'Unknown Title';
                     const author = book.packaging.metadata.creator || 'Unknown Author';
                     
+                    // Check for media overlays using comprehensive detection
+                    const hasMediaOverlay = await this.detectMediaOverlay(book);
+                    
                     // Generate unique ID
                     const bookId = this.generateBookId(title, author);
                     
@@ -3900,6 +3985,7 @@
                         author: author,
                         coverImage: coverImage,
                         filePath: url, // Store the cloud URL as the file path
+                        hasMediaOverlay: hasMediaOverlay, // Store media overlay status
                         addedDate: new Date().toISOString(),
                         lastRead: null,
                         progress: {
@@ -3914,7 +4000,12 @@
                     try {
                         this.libraryManager.addBook(bookData, false);
                         this.renderLibrary();
-                        this.showNotification('Book imported from cloud successfully!', 'success');
+                        
+                        if (hasMediaOverlay) {
+                            this.showNotification('Audiobook with media sync imported!', 'success');
+                        } else {
+                            this.showNotification('Ebook imported from cloud successfully!', 'success');
+                        }
                     } catch (storageError) {
                         if (storageError.name === 'QuotaExceededError') {
                             // Try without cover image
@@ -4441,6 +4532,15 @@
                 if (this.elements.viewer) {
                     this.elements.viewer.style.fontSize = this.fontSize + 'px';
                 }
+                // Also update for regular EPUBs
+                if (!this.hasMediaOverlay) {
+                    if (this.rendition) {
+                        this.applyReaderStyles();
+                    } else if (this.currentSpineIndex !== undefined) {
+                        // Re-render for direct display, preserving scroll position
+                        this.displayChapterDirect(this.currentSpineIndex, true);
+                    }
+                }
             }
 
             applyFontFamily() {
@@ -4452,6 +4552,15 @@
                     // Add the selected font class
                     this.elements.viewer.classList.add(`font-${this.fontFamily}`);
                 }
+                // Also update for regular EPUBs
+                if (!this.hasMediaOverlay) {
+                    if (this.rendition) {
+                        this.applyReaderStyles();
+                    } else if (this.currentSpineIndex !== undefined) {
+                        // Re-render for direct display, preserving scroll position
+                        this.displayChapterDirect(this.currentSpineIndex, true);
+                    }
+                }
             }
 
             applyLineSpacing() {
@@ -4461,6 +4570,15 @@
                     // Add the selected spacing class
                     this.elements.viewer.classList.add(`spacing-${this.lineSpacing}`);
                 }
+                // Also update for regular EPUBs
+                if (!this.hasMediaOverlay) {
+                    if (this.rendition) {
+                        this.applyReaderStyles();
+                    } else if (this.currentSpineIndex !== undefined) {
+                        // Re-render for direct display, preserving scroll position
+                        this.displayChapterDirect(this.currentSpineIndex, true);
+                    }
+                }
             }
 
             applyTextAlignment() {
@@ -4469,6 +4587,15 @@
                     this.elements.viewer.classList.remove('align-left', 'align-justify');
                     // Add the selected alignment class
                     this.elements.viewer.classList.add(`align-${this.textAlign}`);
+                }
+                // Also update for regular EPUBs
+                if (!this.hasMediaOverlay) {
+                    if (this.rendition) {
+                        this.applyReaderStyles();
+                    } else if (this.currentSpineIndex !== undefined) {
+                        // Re-render for direct display, preserving scroll position
+                        this.displayChapterDirect(this.currentSpineIndex, true);
+                    }
                 }
             }
 
@@ -4493,6 +4620,31 @@
                     this.elements.readerArea.classList.add('dark-mode');
                 } else {
                     this.elements.readerArea.classList.remove('dark-mode');
+                }
+                
+                // Also update for regular EPUBs
+                if (!this.hasMediaOverlay) {
+                    if (this.rendition) {
+                        // For rendition-based display
+                        if (this.isDarkMode) {
+                            this.rendition.themes.default({
+                                'body': {
+                                    'background': '#1a1a1a !important',
+                                    'color': '#e0e0e0 !important'
+                                }
+                            });
+                        } else {
+                            this.rendition.themes.default({
+                                'body': {
+                                    'background': '#ffffff !important',
+                                    'color': '#000000 !important'
+                                }
+                            });
+                        }
+                    } else if (this.currentSpineIndex !== undefined) {
+                        // Re-render for direct display with dark mode
+                        this.displayChapterDirect(this.currentSpineIndex, true);
+                    }
                 }
             }
 
@@ -4617,13 +4769,330 @@
 
                     if (this.overlayChapters.length > 0) {
                         this.elements.chaptersBtn.disabled = false;
+                        this.hasMediaOverlay = true;
                         await this.loadChapterOverlay(this.overlayChapters[0]);
                     } else {
-                        this.showNotification('No media overlays detected', 'error');
+                        console.log('No media overlays found, loading as regular EPUB');
+                        this.hasMediaOverlay = false;
+                        await this.loadAsRegularEPUB();
                     }
                 } catch (error) {
                     console.error('Error checking overlays:', error);
-                    this.showNotification('Error checking for media overlays', 'error');
+                    // Don't show error, just load as regular EPUB
+                    this.hasMediaOverlay = false;
+                    await this.loadAsRegularEPUB();
+                }
+            }
+
+            async loadAsRegularEPUB() {
+                try {
+                    // Get all spine items (chapters)
+                    const spine = this.book.spine;
+                    const spineItems = spine.items || [];
+                    
+                    if (spineItems.length === 0) {
+                        throw new Error('No content found in EPUB');
+                    }
+                    
+                    // Check if we're running on file:// protocol
+                    const isFileProtocol = window.location.protocol === 'file:';
+                    
+                    const viewerElement = this.elements.viewer;
+                    if (!viewerElement) {
+                        throw new Error('Viewer element not found');
+                    }
+                    
+                    viewerElement.innerHTML = ''; // Clear any existing content
+                    
+                    if (isFileProtocol) {
+                        // For file:// protocol, use a simpler display method
+                        // Create a container for manual chapter display
+                        const readerContainer = document.createElement('div');
+                        readerContainer.id = 'epub-reader-container';
+                        readerContainer.style.cssText = `
+                            width: 100%;
+                            height: 100%;
+                            overflow-y: auto;
+                            padding: 2rem;
+                            background: white;
+                            color: black;
+                        `;
+                        viewerElement.appendChild(readerContainer);
+                        
+                        // Store for navigation
+                        this.currentSpineIndex = 0;
+                        this.spineItems = spineItems;
+                        this.readerContainer = readerContainer;
+                        
+                        // Load first chapter
+                        await this.displayChapterDirect(0);
+                        
+                    } else {
+                        // For http:// or https://, use epub.js rendition
+                        this.rendition = this.book.renderTo(viewerElement, {
+                            width: '100%',
+                            height: '100%',
+                            spread: 'none',
+                            snap: true
+                        });
+                        
+                        await this.rendition.display();
+                        this.applyReaderStyles();
+                    }
+                    
+                    // Hide media controls
+                    this.elements.statusBar.style.display = 'none';
+                    this.elements.playBtn.disabled = true;
+                    this.elements.prevBtn.disabled = true;
+                    this.elements.nextBtn.disabled = true;
+                    
+                    // Set up navigation
+                    this.setupRegularEPUBNavigation();
+                    
+                    // Enable chapters button for TOC
+                    this.elements.chaptersBtn.disabled = false;
+                    
+                    // Show book title
+                    const bookData = this.libraryManager.getBook(this.currentBookId);
+                    if (bookData) {
+                        this.elements.bookChapter.textContent = bookData.title;
+                    }
+                    
+                    this.showNotification('Book loaded successfully', 'success');
+                    
+                } catch (error) {
+                    console.error('Error loading regular EPUB:', error);
+                    this.showNotification('Error loading book: ' + error.message, 'error');
+                }
+            }
+            
+            async displayChapterDirect(index, preserveScroll = false) {
+                if (!this.spineItems || index < 0 || index >= this.spineItems.length) {
+                    return;
+                }
+                
+                try {
+                    // Save scroll position if needed
+                    const scrollPosition = preserveScroll && this.readerContainer ? this.readerContainer.scrollTop : 0;
+                    
+                    this.currentSpineIndex = index;
+                    const spineItem = this.spineItems[index];
+                    
+                    // Load the chapter content
+                    const doc = await this.book.load(spineItem.href);
+                    
+                    // Extract the HTML content properly
+                    let htmlContent = '';
+                    if (doc instanceof XMLDocument || doc instanceof Document) {
+                        // Get the body content if it exists, otherwise get the whole document
+                        const bodyElement = doc.querySelector('body');
+                        if (bodyElement) {
+                            htmlContent = bodyElement.innerHTML;
+                        } else {
+                            // If no body, try to serialize the whole document
+                            const serializer = new XMLSerializer();
+                            htmlContent = serializer.serializeToString(doc);
+                        }
+                    } else if (typeof doc === 'string') {
+                        htmlContent = doc;
+                    } else {
+                        htmlContent = String(doc);
+                    }
+                    
+                    // Apply current styles
+                    const fontSize = this.fontSize || 18;
+                    const fontFamily = this.getFontFamilyCSS();
+                    const textAlign = this.textAlign || 'left';
+                    const lineHeight = this.getLineHeight();
+                    
+                    // Dark mode colors
+                    const bgColor = this.isDarkMode ? '#1a1a1a' : '#ffffff';
+                    const textColor = this.isDarkMode ? '#e0e0e0' : '#1a1a1a';
+                    const linkColor = this.isDarkMode ? '#60a5fa' : '#2563eb';
+                    
+                    this.readerContainer.innerHTML = `
+                        <style>
+                            .chapter-content {
+                                font-size: ${fontSize}px !important;
+                                font-family: ${fontFamily} !important;
+                                text-align: ${textAlign} !important;
+                                line-height: ${lineHeight} !important;
+                                max-width: 800px;
+                                margin: 0 auto;
+                                background: ${bgColor} !important;
+                                color: ${textColor} !important;
+                                padding: 2rem;
+                            }
+                            .chapter-content * {
+                                font-size: inherit !important;
+                                font-family: inherit !important;
+                                line-height: inherit !important;
+                                color: ${textColor} !important;
+                            }
+                            .chapter-content a {
+                                color: ${linkColor} !important;
+                            }
+                            .chapter-content img {
+                                max-width: 100%;
+                                height: auto;
+                            }
+                            .chapter-content p {
+                                margin-bottom: 1em;
+                                text-align: ${textAlign} !important;
+                            }
+                            .chapter-content h1, 
+                            .chapter-content h2, 
+                            .chapter-content h3,
+                            .chapter-content h4,
+                            .chapter-content h5,
+                            .chapter-content h6 {
+                                margin-top: 1.5em;
+                                margin-bottom: 0.5em;
+                                font-weight: bold;
+                                text-align: ${textAlign} !important;
+                            }
+                            .chapter-content h1 { font-size: 2em !important; }
+                            .chapter-content h2 { font-size: 1.5em !important; }
+                            .chapter-content h3 { font-size: 1.3em !important; }
+                            .chapter-content div,
+                            .chapter-content span {
+                                text-align: inherit !important;
+                            }
+                        </style>
+                        <div class="chapter-content">
+                            ${htmlContent}
+                        </div>
+                    `;
+                    
+                    // Also update the container background
+                    this.readerContainer.style.background = bgColor;
+                    
+                    // Restore or reset scroll position
+                    if (preserveScroll) {
+                        this.readerContainer.scrollTop = scrollPosition;
+                    } else {
+                        this.readerContainer.scrollTop = 0;
+                    }
+                    
+                    // Update chapter title
+                    const chapterTitle = await this.extractChapterTitle(spineItem);
+                    this.elements.bookChapter.textContent = chapterTitle;
+                    
+                } catch (error) {
+                    console.error('Error displaying chapter:', error);
+                    this.showNotification('Error loading chapter', 'error');
+                }
+            }
+            
+            getFontFamilyCSS() {
+                const fontFamily = this.fontFamily || 'serif';
+                switch (fontFamily) {
+                    case 'sans': return '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+                    case 'serif': return 'Georgia, "Times New Roman", serif';
+                    case 'palatino': return '"Palatino Linotype", "Book Antiqua", Palatino, serif';
+                    case 'garamond': return 'Garamond, "Adobe Garamond Pro", serif';
+                    case 'bookerly': return 'Bookerly, Georgia, serif';
+                    case 'opensans': return '"Open Sans", sans-serif';
+                    case 'roboto': return 'Roboto, sans-serif';
+                    case 'arial': return 'Arial, Helvetica, sans-serif';
+                    case 'verdana': return 'Verdana, Geneva, sans-serif';
+                    case 'mono': return '"Courier New", Courier, monospace';
+                    case 'dyslexic': return 'OpenDyslexic, sans-serif';
+                    case 'atkinson': return '"Atkinson Hyperlegible", sans-serif';
+                    default: return 'Georgia, serif';
+                }
+            }
+            
+            setupRegularEPUBNavigation() {
+                const isFileProtocol = window.location.protocol === 'file:';
+                
+                if (isFileProtocol) {
+                    // Navigation with arrow keys for direct display
+                    const keyHandler = (e) => {
+                        if (e.key === 'ArrowLeft') {
+                            this.previousChapter();
+                        } else if (e.key === 'ArrowRight') {
+                            this.nextChapter();
+                        }
+                    };
+                    
+                    document.removeEventListener('keydown', keyHandler);
+                    document.addEventListener('keydown', keyHandler);
+                    
+                } else if (this.rendition) {
+                    // Navigation with arrow keys for rendition
+                    const keyHandler = (e) => {
+                        if (e.key === 'ArrowLeft') {
+                            this.rendition.prev();
+                        } else if (e.key === 'ArrowRight') {
+                            this.rendition.next();
+                        }
+                    };
+                    
+                    document.removeEventListener('keydown', keyHandler);
+                    document.addEventListener('keydown', keyHandler);
+                    
+                    // Click navigation on the viewer
+                    this.rendition.on('click', (event) => {
+                        const clickX = event.clientX;
+                        const width = window.innerWidth;
+                        
+                        if (clickX < width / 3) {
+                            this.rendition.prev();
+                        } else if (clickX > (2 * width) / 3) {
+                            this.rendition.next();
+                        }
+                    });
+                }
+            }
+            
+            previousChapter() {
+                if (this.currentSpineIndex > 0) {
+                    this.displayChapterDirect(this.currentSpineIndex - 1);
+                }
+            }
+            
+            nextChapter() {
+                if (this.currentSpineIndex < this.spineItems.length - 1) {
+                    this.displayChapterDirect(this.currentSpineIndex + 1);
+                }
+            }
+            
+            applyReaderStyles() {
+                const isFileProtocol = window.location.protocol === 'file:';
+                
+                if (isFileProtocol && this.currentSpineIndex !== undefined) {
+                    // Re-render current chapter with new styles for direct display
+                    this.displayChapterDirect(this.currentSpineIndex);
+                } else if (this.rendition) {
+                    // Apply styles to rendition
+                    const fontSize = this.fontSize || 18;
+                    const fontFamily = this.fontFamily || 'serif';
+                    const textAlign = this.textAlign || 'left';
+                    const lineHeight = this.getLineHeight();
+                    
+                    const fontFamilyCSS = this.getFontFamilyCSS();
+                    
+                    this.rendition.themes.default({
+                        'body': {
+                            'font-size': fontSize + 'px !important',
+                            'font-family': fontFamilyCSS + ' !important',
+                            'text-align': textAlign + ' !important',
+                            'line-height': lineHeight + ' !important',
+                            'padding': '2rem !important'
+                        }
+                    });
+                }
+            }
+            
+            getLineHeight() {
+                const spacing = this.lineSpacing || 'normal';
+                switch (spacing) {
+                    case 'compact': return '1.4';
+                    case 'normal': return '1.6';
+                    case 'relaxed': return '1.8';
+                    case 'loose': return '2.0';
+                    default: return '1.6';
                 }
             }
 
@@ -5327,30 +5796,55 @@
                         itemDiv.addEventListener('click', async () => {
                             modal.remove();
                             try {
-                                // Extract the base href without anchor
-                                const baseHref = item.href.split('#')[0];
+                                const isFileProtocol = window.location.protocol === 'file:';
                                 
-                                // Find the matching spine item from overlayChapters
-                                let matchingChapter = this.overlayChapters.find(ch => {
-                                    const chapterBase = ch.href.split('#')[0];
-                                    return baseHref.includes(chapterBase) || chapterBase.includes(baseHref);
-                                });
-                                
-                                // If not found in overlay chapters, try to find in all spine items
-                                if (!matchingChapter) {
-                                    const spine = this.book.spine.items || this.book.spine;
-                                    matchingChapter = spine.find(spineItem => {
+                                // Check if this is a regular EPUB or media overlay EPUB
+                                if (this.hasMediaOverlay) {
+                                    // Media overlay navigation
+                                    const baseHref = item.href.split('#')[0];
+                                    
+                                    // Find the matching spine item from overlayChapters
+                                    let matchingChapter = this.overlayChapters.find(ch => {
+                                        const chapterBase = ch.href.split('#')[0];
+                                        return baseHref.includes(chapterBase) || chapterBase.includes(baseHref);
+                                    });
+                                    
+                                    // If not found in overlay chapters, try to find in all spine items
+                                    if (!matchingChapter) {
+                                        const spine = this.book.spine.items || this.book.spine;
+                                        matchingChapter = spine.find(spineItem => {
+                                            const spineBase = spineItem.href.split('#')[0];
+                                            return baseHref.includes(spineBase) || spineBase.includes(baseHref);
+                                        });
+                                    }
+                                    
+                                    if (matchingChapter) {
+                                        await this.loadChapterOverlay(matchingChapter);
+                                        console.log(`Navigated to: ${itemLabel}`);
+                                    } else {
+                                        console.warn(`Could not find spine item for: ${item.href}`);
+                                        alert('Could not find this chapter in the book');
+                                    }
+                                } else if (isFileProtocol && this.spineItems) {
+                                    // Regular EPUB with direct display (file:// protocol)
+                                    const baseHref = item.href.split('#')[0];
+                                    const chapterIndex = this.spineItems.findIndex(spineItem => {
                                         const spineBase = spineItem.href.split('#')[0];
                                         return baseHref.includes(spineBase) || spineBase.includes(baseHref);
                                     });
-                                }
-                                
-                                if (matchingChapter) {
-                                    await this.loadChapterOverlay(matchingChapter);
-                                    console.log(`Navigated to: ${itemLabel}`);
+                                    
+                                    if (chapterIndex !== -1) {
+                                        await this.displayChapterDirect(chapterIndex);
+                                        console.log(`Navigated to: ${itemLabel}`);
+                                    } else {
+                                        alert('Could not find this chapter in the book');
+                                    }
                                 } else {
-                                    console.warn(`Could not find spine item for: ${item.href}`);
-                                    alert('Could not find this chapter in the book');
+                                    // Regular EPUB with rendition (http:// protocol)
+                                    if (this.rendition) {
+                                        await this.rendition.display(item.href);
+                                        console.log(`Navigated to: ${itemLabel}`);
+                                    }
                                 }
                             } catch (error) {
                                 console.error('Navigation error:', error);
