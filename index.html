@@ -4625,22 +4625,8 @@
                 // Also update for regular EPUBs
                 if (!this.hasMediaOverlay) {
                     if (this.rendition) {
-                        // For rendition-based display
-                        if (this.isDarkMode) {
-                            this.rendition.themes.default({
-                                'body': {
-                                    'background': '#1a1a1a !important',
-                                    'color': '#e0e0e0 !important'
-                                }
-                            });
-                        } else {
-                            this.rendition.themes.default({
-                                'body': {
-                                    'background': '#ffffff !important',
-                                    'color': '#000000 !important'
-                                }
-                            });
-                        }
+                        // For rendition-based display, apply all reader styles
+                        this.applyReaderStyles();
                     } else if (this.currentSpineIndex !== undefined) {
                         // Re-render for direct display with dark mode
                         this.displayChapterDirect(this.currentSpineIndex, true);
@@ -4829,15 +4815,62 @@
                         
                     } else {
                         // For http:// or https://, use epub.js rendition
-                        this.rendition = this.book.renderTo(viewerElement, {
+                        // Create a dedicated container for the rendition
+                        const renditionContainer = document.createElement('div');
+                        renditionContainer.id = 'epub-rendition-container';
+                        renditionContainer.style.cssText = `
+                            width: 100%;
+                            height: 100%;
+                            overflow: auto;
+                        `;
+                        viewerElement.appendChild(renditionContainer);
+                        
+                        this.rendition = this.book.renderTo(renditionContainer, {
                             width: '100%',
                             height: '100%',
                             spread: 'none',
-                            snap: true
+                            flow: 'scrolled',
+                            overflow: 'auto'
                         });
                         
+                        // Register themes BEFORE displaying
+                        const fontSize = this.fontSize || 18;
+                        const fontFamilyCSS = this.getFontFamilyCSS();
+                        const textAlign = this.textAlign || 'left';
+                        const lineHeight = this.getLineHeight();
+                        const bgColor = this.isDarkMode ? '#1a1a1a' : '#ffffff';
+                        const textColor = this.isDarkMode ? '#e0e0e0' : '#1e293b';
+                        
+                        this.rendition.themes.register('custom', {
+                            'body': {
+                                'font-size': fontSize + 'px !important',
+                                'font-family': fontFamilyCSS + ' !important',
+                                'text-align': textAlign + ' !important',
+                                'line-height': lineHeight + ' !important',
+                                'padding': '2rem !important',
+                                'max-width': '800px !important',
+                                'margin': '0 auto !important',
+                                'background': bgColor + ' !important',
+                                'color': textColor + ' !important'
+                            },
+                            'p': {
+                                'margin-bottom': '1.25rem !important',
+                                'text-align': textAlign + ' !important'
+                            },
+                            'h1, h2, h3, h4, h5, h6': {
+                                'margin-top': '2rem !important',
+                                'margin-bottom': '1rem !important',
+                                'color': textColor + ' !important'
+                            }
+                        });
+                        
+                        this.rendition.themes.select('custom');
+                        
+                        // Wait for rendition to be ready
                         await this.rendition.display();
-                        this.applyReaderStyles();
+                        
+                        // Store spine items for navigation
+                        this.spineItems = spineItems;
                     }
                     
                     // Hide media controls
@@ -5088,9 +5121,9 @@
                 
                 if (isFileProtocol && this.currentSpineIndex !== undefined) {
                     // Re-render current chapter with new styles for direct display
-                    this.displayChapterDirect(this.currentSpineIndex);
+                    this.displayChapterDirect(this.currentSpineIndex, true);
                 } else if (this.rendition) {
-                    // Apply styles to rendition
+                    // Update the custom theme without re-displaying
                     const fontSize = this.fontSize || 18;
                     const fontFamily = this.fontFamily || 'serif';
                     const textAlign = this.textAlign || 'left';
@@ -5098,13 +5131,30 @@
                     
                     const fontFamilyCSS = this.getFontFamilyCSS();
                     
-                    this.rendition.themes.default({
+                    const bgColor = this.isDarkMode ? '#1a1a1a' : '#ffffff';
+                    const textColor = this.isDarkMode ? '#e0e0e0' : '#1e293b';
+                    
+                    // Override the custom theme
+                    this.rendition.themes.override('custom', {
                         'body': {
                             'font-size': fontSize + 'px !important',
                             'font-family': fontFamilyCSS + ' !important',
                             'text-align': textAlign + ' !important',
                             'line-height': lineHeight + ' !important',
-                            'padding': '2rem !important'
+                            'padding': '2rem !important',
+                            'max-width': '800px !important',
+                            'margin': '0 auto !important',
+                            'background': bgColor + ' !important',
+                            'color': textColor + ' !important'
+                        },
+                        'p': {
+                            'margin-bottom': '1.25rem !important',
+                            'text-align': textAlign + ' !important'
+                        },
+                        'h1, h2, h3, h4, h5, h6': {
+                            'margin-top': '2rem !important',
+                            'margin-bottom': '1rem !important',
+                            'color': textColor + ' !important'
                         }
                     });
                 }
