@@ -4867,11 +4867,20 @@
             }
             
             async displayChapterDirect(index, preserveScroll = false) {
+                console.log('[DEBUG] displayChapterDirect called:', { index, preserveScroll, hasSpineItems: !!this.spineItems, hasReaderContainer: !!this.readerContainer });
+                
                 if (!this.spineItems || index < 0 || index >= this.spineItems.length) {
+                    console.error('[DEBUG] displayChapterDirect: Invalid state', {
+                        spineItems: this.spineItems?.length,
+                        index,
+                        hasReaderContainer: !!this.readerContainer
+                    });
                     return;
                 }
                 
                 try {
+                    console.log('[DEBUG] Loading chapter', this.spineItems[index].href);
+                    
                     // Save scroll position if needed
                     const scrollPosition = preserveScroll && this.readerContainer ? this.readerContainer.scrollTop : 0;
                     
@@ -4881,6 +4890,8 @@
                     // Load the chapter content
                     const doc = await this.book.load(spineItem.href);
                     
+                    console.log('[DEBUG] Chapter loaded, doc type:', doc?.constructor?.name);
+                    
                     // Extract the HTML content properly
                     let htmlContent = '';
                     if (doc instanceof XMLDocument || doc instanceof Document) {
@@ -4888,15 +4899,23 @@
                         const bodyElement = doc.querySelector('body');
                         if (bodyElement) {
                             htmlContent = bodyElement.innerHTML;
+                            console.log('[DEBUG] Extracted from body, length:', htmlContent.length);
                         } else {
                             // If no body, try to serialize the whole document
                             const serializer = new XMLSerializer();
                             htmlContent = serializer.serializeToString(doc);
+                            console.log('[DEBUG] Serialized document, length:', htmlContent.length);
                         }
                     } else if (typeof doc === 'string') {
                         htmlContent = doc;
+                        console.log('[DEBUG] String content, length:', htmlContent.length);
                     } else {
                         htmlContent = String(doc);
+                        console.log('[DEBUG] Converted to string, length:', htmlContent.length);
+                    }
+                    
+                    if (!htmlContent) {
+                        console.error('[DEBUG] No HTML content extracted!');
                     }
                     
                     // Apply current styles
@@ -4909,6 +4928,8 @@
                     const bgColor = this.isDarkMode ? '#1a1a1a' : '#ffffff';
                     const textColor = this.isDarkMode ? '#e0e0e0' : '#1a1a1a';
                     const linkColor = this.isDarkMode ? '#60a5fa' : '#2563eb';
+                    
+                    console.log('[DEBUG] Rendering to readerContainer');
                     
                     this.readerContainer.innerHTML = `
                         <style>
@@ -4964,6 +4985,8 @@
                         </div>
                     `;
                     
+                    console.log('[DEBUG] Content rendered to innerHTML');
+                    
                     // Also update the container background
                     this.readerContainer.style.background = bgColor;
                     
@@ -4977,6 +5000,8 @@
                     // Update chapter title
                     const chapterTitle = await this.extractChapterTitle(spineItem);
                     this.elements.bookChapter.textContent = chapterTitle;
+                    
+                    console.log('[DEBUG] displayChapterDirect complete');
                     
                 } catch (error) {
                     console.error('Error displaying chapter:', error);
