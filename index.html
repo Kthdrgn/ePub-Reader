@@ -2214,45 +2214,21 @@
                     return;
                 }
 
-                // Sync every 5 minutes using two-way sync
+                // Sync every 5 minutes - UPLOAD ONLY
                 this.syncInterval = setInterval(async () => {
-                    console.log('Auto-syncing (two-way)...');
+                    console.log('Auto-syncing (upload only)...');
                     
                     try {
-                        // Download remote data
-                        const downloadResult = await this.syncFromGoogleDrive();
+                        const books = libraryManager.getAllBooks();
+                        const result = await this.syncToGoogleDrive(books);
                         
-                        if (downloadResult.success) {
-                            // Merge with local
-                            const localBooks = libraryManager.getAllBooks();
-                            const remoteBooks = downloadResult.data || [];
-                            const remoteDeletedBooks = downloadResult.deletedBooks || [];
-                            
-                            const mergedBooks = this.mergeLibraries(
-                                localBooks, 
-                                remoteBooks, 
-                                remoteDeletedBooks
-                            );
-                            
-                            // Update local library
-                            libraryManager.books = [];
-                            mergedBooks.forEach(book => {
-                                libraryManager.addBook(book, false);
-                            });
-                            
-                            // Upload merged result
-                            await this.syncToGoogleDrive(mergedBooks);
-                            console.log('✓ Auto-sync successful (two-way)');
+                        if (result.success) {
+                            console.log('✓ Auto-sync successful (uploaded)');
                         } else {
-                            // No remote data, just upload
-                            const books = libraryManager.getAllBooks();
-                            const result = await this.syncToGoogleDrive(books);
-                            if (result.success) {
-                                console.log('✓ Auto-sync successful (upload only)');
-                            }
+                            console.error('Auto-sync failed:', result.error);
                         }
                     } catch (error) {
-                        console.error('Auto-sync failed:', error);
+                        console.error('Auto-sync error:', error);
                     }
                 }, 5 * 60 * 1000); // 5 minutes
             }
@@ -3636,55 +3612,20 @@
 
                 modal.querySelector('#uploadToGDrive').addEventListener('click', async () => {
                     modal.remove();
-                    this.showNotification('⏳ Syncing to Google Drive...', 'info');
+                    this.showNotification('⏳ Uploading to Google Drive...', 'info');
                     
                     try {
-                        // First, download remote data
-                        const downloadResult = await this.syncManager.syncFromGoogleDrive();
-                        
-                        let booksToUpload;
-                        
-                        if (downloadResult.success) {
-                            // Merge local with remote
-                            const localBooks = this.libraryManager.getAllBooks();
-                            const remoteBooks = downloadResult.data || [];
-                            const remoteDeletedBooks = downloadResult.deletedBooks || [];
-                            
-                            // Perform smart merge
-                            const mergedBooks = this.syncManager.mergeLibraries(
-                                localBooks, 
-                                remoteBooks, 
-                                remoteDeletedBooks
-                            );
-                            
-                            // Update local library with merged data
-                            this.libraryManager.books = [];
-                            mergedBooks.forEach(book => {
-                                this.libraryManager.addBook(book, false);
-                            });
-                            
-                            booksToUpload = mergedBooks;
-                            this.renderLibrary();
-                        } else if (downloadResult.needsFirstSync || downloadResult.errorCode === 404) {
-                            // No remote file yet or file was deleted - just upload local
-                            console.log('Creating first sync file or replacing deleted one');
-                            booksToUpload = this.libraryManager.getAllBooks();
-                        } else {
-                            // Other error - show it and abort
-                            throw new Error(downloadResult.error);
-                        }
-                        
-                        // Now upload the merged data
-                        const result = await this.syncManager.syncToGoogleDrive(booksToUpload);
+                        const books = this.libraryManager.getAllBooks();
+                        const result = await this.syncManager.syncToGoogleDrive(books);
                         
                         if (result.success) {
-                            this.showNotification('✓ Synced to Google Drive!', 'success');
+                            this.showNotification('✓ Uploaded to Google Drive!', 'success');
                         } else {
-                            this.showNotification('Sync failed: ' + result.error, 'error');
+                            this.showNotification('Upload failed: ' + result.error, 'error');
                         }
                     } catch (error) {
-                        console.error('Sync error:', error);
-                        this.showNotification('Sync failed: ' + error.message, 'error');
+                        console.error('Upload error:', error);
+                        this.showNotification('Upload failed: ' + error.message, 'error');
                     }
                 });
 
