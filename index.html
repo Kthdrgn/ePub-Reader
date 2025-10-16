@@ -4662,16 +4662,8 @@
 
                     const chapterTitle = await this.extractChapterTitle(spineItem);
                     
-                    // Extract filename from href
-                    const filename = spineItem.href.split('/').pop();
-                    
-                    // Display title with filename below
-                    this.elements.bookChapter.innerHTML = `
-                        <div style="line-height: 1.4;">
-                            <div>${chapterTitle}</div>
-                            <div style="font-size: 0.75em; color: #94a3b8; margin-top: 2px;">${filename}</div>
-                        </div>
-                    `;
+                    // Display just the chapter title
+                    this.elements.bookChapter.textContent = chapterTitle;
                     
                     this.elements.statusBar.style.display = 'flex';
                     this.elements.playBtn.disabled = false;
@@ -4689,6 +4681,34 @@
 
             async extractChapterTitle(spineItem) {
                 try {
+                    // First try to get the title from TOC
+                    const navigation = await this.book.loaded.navigation;
+                    const toc = navigation.toc;
+                    
+                    // Recursive function to search TOC for matching href
+                    const findInToc = (items, targetHref) => {
+                        for (const item of items) {
+                            const itemBase = item.href.split('#')[0];
+                            const targetBase = targetHref.split('#')[0];
+                            
+                            if (itemBase.includes(targetBase) || targetBase.includes(itemBase)) {
+                                return item.label;
+                            }
+                            
+                            if (item.subitems && item.subitems.length > 0) {
+                                const found = findInToc(item.subitems, targetHref);
+                                if (found) return found;
+                            }
+                        }
+                        return null;
+                    };
+                    
+                    const tocTitle = findInToc(toc, spineItem.href);
+                    if (tocTitle) {
+                        return tocTitle;
+                    }
+                    
+                    // Fallback to extracting from HTML content
                     const chapterPath = spineItem.href;
                     const archiveFiles = Object.keys(this.book.archive.zip.files);
                     let actualPath = null;
@@ -5140,8 +5160,17 @@
             }
 
             async showAudioChapters() {
-                if (this.overlayChapters.length === 0) {
-                    alert('No audio chapters available');
+                if (!this.book) {
+                    alert('No book loaded');
+                    return;
+                }
+
+                // Get the navigation from the EPUB using ePub.js
+                const navigation = await this.book.loaded.navigation;
+                const toc = navigation.toc;
+
+                if (!toc || toc.length === 0) {
+                    alert('No table of contents available');
                     return;
                 }
 
@@ -5227,48 +5256,118 @@
                     gap: 0.5rem;
                 `;
 
-                for (let index = 0; index < this.overlayChapters.length; index++) {
-                    const chapter = this.overlayChapters[index];
-                    let chapterTitle = await this.extractChapterTitle(chapter);
-                    
-                    // Extract filename from href
-                    const filename = chapter.href.split('/').pop();
+                let currentChapterElement = null;
 
-                    const item = document.createElement('button');
-                    item.innerHTML = `
-                        <div style="font-weight: 600;">${chapterTitle}</div>
-                        <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 0.25rem;">${filename}</div>
-                    `;
-                    item.style.cssText = `
-                        background: #0f172a;
-                        color: #f8fafc;
-                        border: 1px solid #334155;
-                        padding: 1rem;
-                        border-radius: 0.5rem;
-                        cursor: pointer;
-                        text-align: left;
-                        transition: all 0.2s;
-                        width: 100%;
-                    `;
+                // Recursive function to render TOC items with proper nesting
+                const renderTocItems = (items, level = 0) => {
+                    for (const item of items) {
+                        const itemDiv = document.createElement('button');
+                        
+                        // Clean up the label for display
+                        const itemLabel = item.label || 'Untitled';
+                        
+                        itemDiv.innerHTML = `
+                            <div style="font-weight: ${level === 0 ? '600' : '500'};">${itemLabel}</div>
+                        `;
+                        
+                        itemDiv.style.cssText = `
+                            background: #0f172a;
+                            color: #f8fafc;
+                            border: 1px solid #334155;
+                            padding: 1rem;
+                            padding-left: ${1 + (level * 1.5)}rem;
+                            border-radius: 0.5rem;
+                            cursor: pointer;
+                            text-align: left;
+                            transition: all 0.2s;
+                            width: 100%;
+                        `;
 
-                    item.addEventListener('mouseenter', () => {
-                        item.style.background = '#334155';
-                        item.style.transform = 'translateX(4px)';
-                    });
+                        // Check if this is the current chapter
+                        let isCurrentChapter = false;
+                        if (this.currentChapter) {
+                            const currentBase = this.currentChapter.href.split('#')[0];
+                            const itemBase = item.href.split('#')[0];
+                            isCurrentChapter = currentBase.includes(itemBase) || itemBase.includes(currentBase);
+                        }
+                        
+                        if (isCurrentChapter) {
+                            itemDiv.style.borderColor = '#2563eb';
+                            itemDiv.style.background = '#1e3a8a';
+                            itemDiv.style.boxShadow = '0 0 20px rgba(37, 99, 235, 0.5)';
+                            
+                            // Add a "current" indicator
+                            itemDiv.innerHTML = `
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <span style="color: #60a5fa; font-size: 1.2em;">▶</span>
+                                    <div style="font-weight: ${level === 0 ? '600' : '500'};">${itemLabel}</div>
+                                </div>
+                            `;
+                            
+                            // Store reference to scroll to later
+                            currentChapterElement = itemDiv;
+                        }
 
-                    item.addEventListener('mouseleave', () => {
-                        item.style.background = '#0f172a';
-                        item.style.transform = 'translateX(0)';
-                    });
+                        itemDiv.addEventListener('mouseenter', () => {
+                            if (!isCurrentChapter) {
+                                itemDiv.style.background = '#334155';
+                            }
+                            itemDiv.style.transform = 'translateX(4px)';
+                        });
 
-                    item.addEventListener('click', async () => {
-                        modal.remove();
-                        await this.loadChapterOverlay(chapter);
-                    });
+                        itemDiv.addEventListener('mouseleave', () => {
+                            if (isCurrentChapter) {
+                                itemDiv.style.background = '#1e3a8a';
+                            } else {
+                                itemDiv.style.background = '#0f172a';
+                            }
+                            itemDiv.style.transform = 'translateX(0)';
+                        });
 
-                    chaptersList.appendChild(item);
-                }
+                        itemDiv.addEventListener('click', async () => {
+                            modal.remove();
+                            try {
+                                // Extract the base href without anchor
+                                const baseHref = item.href.split('#')[0];
+                                
+                                // Find the matching spine item from overlayChapters
+                                let matchingChapter = this.overlayChapters.find(ch => {
+                                    const chapterBase = ch.href.split('#')[0];
+                                    return baseHref.includes(chapterBase) || chapterBase.includes(baseHref);
+                                });
+                                
+                                // If not found in overlay chapters, try to find in all spine items
+                                if (!matchingChapter) {
+                                    const spine = this.book.spine.items || this.book.spine;
+                                    matchingChapter = spine.find(spineItem => {
+                                        const spineBase = spineItem.href.split('#')[0];
+                                        return baseHref.includes(spineBase) || spineBase.includes(baseHref);
+                                    });
+                                }
+                                
+                                if (matchingChapter) {
+                                    await this.loadChapterOverlay(matchingChapter);
+                                    console.log(`Navigated to: ${itemLabel}`);
+                                } else {
+                                    console.warn(`Could not find spine item for: ${item.href}`);
+                                    alert('Could not find this chapter in the book');
+                                }
+                            } catch (error) {
+                                console.error('Navigation error:', error);
+                                alert('Failed to navigate to chapter: ' + error.message);
+                            }
+                        });
 
+                        chaptersList.appendChild(itemDiv);
+
+                        // Recursively render sub-items if they exist
+                        if (item.subitems && item.subitems.length > 0) {
+                            renderTocItems(item.subitems, level + 1);
+                        }
+                    }
+                };
+
+                renderTocItems(toc);
                 chaptersContainer.appendChild(chaptersList);
 
                 const closeBtn = document.createElement('button');
@@ -5291,6 +5390,16 @@
                 chaptersContainer.appendChild(closeBtn);
                 modal.appendChild(chaptersContainer);
                 document.body.appendChild(modal);
+
+                // Scroll to current chapter after a brief delay to ensure rendering is complete
+                if (currentChapterElement) {
+                    setTimeout(() => {
+                        currentChapterElement.scrollIntoView({
+                            behavior: 'smooth',
+                            block: 'center'
+                        });
+                    }, 100);
+                }
 
                 modal.addEventListener('click', (e) => {
                     if (e.target === modal) modal.remove();
