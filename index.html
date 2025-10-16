@@ -434,6 +434,10 @@
             transition: all 0.3s ease;
         }
 
+        .reader-area.paginated {
+            overflow: hidden;
+        }
+
         .reader-area.fullscreen {
             position: fixed;
             top: 0;
@@ -451,6 +455,63 @@
             gap: 0.5rem;
             z-index: 1100;
             pointer-events: auto;
+        }
+
+        .page-navigation {
+            position: fixed;
+            bottom: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            gap: 0.5rem;
+            z-index: 1100;
+            pointer-events: auto;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .page-navigation.active {
+            display: flex;
+        }
+
+        .page-nav-btn {
+            background: rgba(255, 255, 255, 0.95);
+            border: none;
+            color: #475569;
+            padding: 0.625rem;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.75rem;
+            height: 2.75rem;
+            font-size: 1.25rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .page-nav-btn:hover:not(:disabled) {
+            background: white;
+            transform: translateY(-2px) scale(1.05);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        .page-nav-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .page-info {
+            color: white;
+            font-size: 0.875rem;
+            font-weight: 600;
+            padding: 0 0.5rem;
+            min-width: 80px;
+            text-align: center;
         }
 
         @media (max-width: 768px) {
@@ -1463,6 +1524,36 @@
             border-color: var(--primary);
         }
 
+        .page-mode-selector {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .page-mode-option {
+            background: var(--bg-main);
+            color: var(--text-primary);
+            border: 2px solid var(--border);
+            padding: 0.75rem 0.5rem;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            font-size: 0.8125rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .page-mode-option:hover {
+            background: var(--border);
+        }
+
+        .page-mode-option.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
         /* Loading Spinner */
         .book-loading-overlay {
             position: absolute;
@@ -1595,6 +1686,11 @@
                                 <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" fill="currentColor"/>
                             </svg>
                         </button>
+                    </div>
+                    <div class="page-navigation" id="pageNavigation">
+                        <button class="page-nav-btn" id="prevPageBtn" disabled>◀</button>
+                        <div class="page-info" id="pageInfo">Page 1</div>
+                        <button class="page-nav-btn" id="nextPageBtn">▶</button>
                     </div>
                     <div id="viewer"></div>
                 </div>
@@ -2781,6 +2877,12 @@
                 this.clearCachedBooksOnStartup();
                 this.renderLibrary();
                 
+                // Initialize page mode properties
+                this.pageMode = localStorage.getItem('pageMode') || 'scroll';
+                this.currentPage = 0;
+                this.totalPages = 0;
+                this.pageContent = [];
+                
                 // Perform initial sync and start auto-sync
                 this.performInitialSyncAndStart();
                 
@@ -2996,7 +3098,11 @@
                     debugContent: document.getElementById('debugContent'),
                     settingsBtn: document.getElementById('settingsBtn'),
                     fullscreenBtn: document.getElementById('fullscreenBtn'),
-                    fullscreenIcon: document.getElementById('fullscreenIcon')
+                    fullscreenIcon: document.getElementById('fullscreenIcon'),
+                    pageNavigation: document.getElementById('pageNavigation'),
+                    prevPageBtn: document.getElementById('prevPageBtn'),
+                    nextPageBtn: document.getElementById('nextPageBtn'),
+                    pageInfo: document.getElementById('pageInfo')
                 };
                 
                 // Initialize font size from localStorage or default
@@ -3004,10 +3110,17 @@
                 this.fontFamily = localStorage.getItem('fontFamily') || 'sans';
                 this.lineSpacing = localStorage.getItem('lineSpacing') || 'normal';
                 this.textAlign = localStorage.getItem('textAlign') || 'left';
+                this.pageMode = localStorage.getItem('pageMode') || 'scroll';
                 this.applyFontSize();
                 this.applyFontFamily();
                 this.applyLineSpacing();
                 this.applyTextAlignment();
+                // Don't call applyPageMode here - no content loaded yet
+                // Just set the UI state
+                if (this.pageMode === 'paginated') {
+                    this.elements.readerArea.classList.add('paginated');
+                    this.elements.pageNavigation.classList.add('active');
+                }
             }
 
             bindEvents() {
@@ -3050,6 +3163,10 @@
                 this.elements.chaptersBtn.addEventListener('click', () => this.showAudioChapters());
                 this.elements.settingsBtn.addEventListener('click', () => this.showSettingsModal());
                 this.elements.fullscreenBtn.addEventListener('click', () => this.toggleFullscreen());
+                
+                // Page navigation buttons
+                this.elements.prevPageBtn.addEventListener('click', () => this.previousPage());
+                this.elements.nextPageBtn.addEventListener('click', () => this.nextPage());
                 
                 document.querySelectorAll('.speed-btn').forEach(btn => {
                     btn.addEventListener('click', (e) => {
@@ -4253,6 +4370,16 @@
                         
                         <div class="settings-section">
                             <label class="settings-label">
+                                📄 Reading Mode
+                            </label>
+                            <div class="page-mode-selector">
+                                <button class="page-mode-option ${this.pageMode === 'scroll' ? 'active' : ''}" data-mode="scroll">Scroll</button>
+                                <button class="page-mode-option ${this.pageMode === 'paginated' ? 'active' : ''}" data-mode="paginated">Page Flip</button>
+                            </div>
+                        </div>
+                        
+                        <div class="settings-section">
+                            <label class="settings-label">
                                 Line Spacing
                             </label>
                             <div class="spacing-selector">
@@ -4353,6 +4480,21 @@
                         
                         // Update active state
                         alignmentOptions.forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
+                    });
+                });
+                
+                // Page mode selector
+                const pageModeOptions = modal.querySelectorAll('.page-mode-option');
+                pageModeOptions.forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const mode = btn.dataset.mode;
+                        this.pageMode = mode;
+                        this.applyPageMode();
+                        localStorage.setItem('pageMode', mode);
+                        
+                        // Update active state
+                        pageModeOptions.forEach(b => b.classList.remove('active'));
                         btn.classList.add('active');
                     });
                 });
@@ -4540,6 +4682,123 @@
                 }
             }
 
+            applyPageMode() {
+                if (this.pageMode === 'paginated') {
+                    this.elements.readerArea.classList.add('paginated');
+                    this.elements.pageNavigation.classList.add('active');
+                    
+                    // If we have content loaded, paginate it
+                    if (!this.hasMediaOverlay && this.elements.viewer && this.elements.viewer.innerHTML) {
+                        this.paginateContent();
+                    }
+                } else {
+                    this.elements.readerArea.classList.remove('paginated');
+                    this.elements.pageNavigation.classList.remove('active');
+                    
+                    // Restore scroll mode - only if we have content
+                    if (this.pageContent && this.pageContent.length > 0 && this.currentSpineIndex !== undefined) {
+                        this.displayChapterDirect(this.currentSpineIndex, false);
+                    }
+                }
+            }
+
+            paginateContent() {
+                if (!this.elements.viewer || !this.elements.viewer.innerHTML) return;
+                
+                const viewerElement = this.elements.viewer;
+                const readerArea = this.elements.readerArea;
+                
+                // Get the full content
+                const fullContent = viewerElement.innerHTML;
+                
+                // Calculate page height (viewport height minus padding)
+                const pageHeight = readerArea.clientHeight - 100; // Some margin
+                
+                // Create a temporary container to measure content
+                const tempContainer = document.createElement('div');
+                tempContainer.style.cssText = `
+                    position: absolute;
+                    visibility: hidden;
+                    width: ${viewerElement.offsetWidth}px;
+                    font-size: ${this.fontSize}px;
+                    line-height: ${this.getLineHeight()};
+                `;
+                tempContainer.innerHTML = fullContent;
+                document.body.appendChild(tempContainer);
+                
+                // Split content into pages
+                this.pageContent = [];
+                const paragraphs = Array.from(tempContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div'));
+                
+                // If no paragraphs found, just use the whole content as one page
+                if (paragraphs.length === 0) {
+                    this.pageContent = [fullContent];
+                    document.body.removeChild(tempContainer);
+                    this.totalPages = 1;
+                    this.currentPage = 0;
+                    this.displayPage(0);
+                    return;
+                }
+                
+                let currentPageContent = '';
+                let currentPageHeight = 0;
+                
+                paragraphs.forEach(element => {
+                    const elementHeight = element.offsetHeight;
+                    
+                    if (currentPageHeight + elementHeight > pageHeight && currentPageContent) {
+                        // Save current page and start new one
+                        this.pageContent.push(currentPageContent);
+                        currentPageContent = element.outerHTML;
+                        currentPageHeight = elementHeight;
+                    } else {
+                        currentPageContent += element.outerHTML;
+                        currentPageHeight += elementHeight;
+                    }
+                });
+                
+                // Add last page
+                if (currentPageContent) {
+                    this.pageContent.push(currentPageContent);
+                }
+                
+                document.body.removeChild(tempContainer);
+                
+                // Display first page
+                this.totalPages = this.pageContent.length;
+                this.currentPage = 0;
+                this.displayPage(0);
+            }
+
+            displayPage(pageIndex) {
+                if (!this.pageContent || pageIndex < 0 || pageIndex >= this.pageContent.length) return;
+                
+                this.currentPage = pageIndex;
+                this.elements.viewer.innerHTML = this.pageContent[pageIndex];
+                
+                // Update page info
+                this.elements.pageInfo.textContent = `Page ${pageIndex + 1} of ${this.totalPages}`;
+                
+                // Update button states
+                this.elements.prevPageBtn.disabled = pageIndex === 0;
+                this.elements.nextPageBtn.disabled = pageIndex === this.totalPages - 1;
+                
+                // Scroll to top
+                this.elements.readerArea.scrollTop = 0;
+            }
+
+            previousPage() {
+                if (this.currentPage > 0) {
+                    this.displayPage(this.currentPage - 1);
+                }
+            }
+
+            nextPage() {
+                if (this.currentPage < this.totalPages - 1) {
+                    this.displayPage(this.currentPage + 1);
+                }
+            }
+
             toggleFullscreen() {
                 this.isFullscreen = !this.isFullscreen;
                 
@@ -4697,6 +4956,11 @@
                     if (this.overlayChapters.length > 0) {
                         this.elements.chaptersBtn.disabled = false;
                         this.hasMediaOverlay = true;
+                        
+                        // Hide page navigation for media overlay books
+                        this.elements.pageNavigation.classList.remove('active');
+                        this.elements.readerArea.classList.remove('paginated');
+                        
                         await this.loadChapterOverlay(this.overlayChapters[0]);
                     } else {
                         console.log('No media overlays found, loading as regular EPUB');
@@ -4833,6 +5097,13 @@
                     }
                     
                     this.showNotification('Book loaded successfully', 'success');
+                    
+                    // Apply page mode if in paginated mode (after content is loaded)
+                    if (this.pageMode === 'paginated') {
+                        setTimeout(() => {
+                            this.applyPageMode();
+                        }, 500);
+                    }
                     
                 } catch (error) {
                     console.error('Error loading regular EPUB:', error);
@@ -4974,6 +5245,11 @@
                     // Update chapter title
                     const chapterTitle = await this.extractChapterTitle(spineItem);
                     this.elements.bookChapter.textContent = chapterTitle;
+                    
+                    // Apply pagination if in paginated mode
+                    if (this.pageMode === 'paginated') {
+                        this.paginateContent();
+                    }
                     
                     console.log('[DEBUG] displayChapterDirect complete');
                     
@@ -5921,14 +6197,26 @@
 
                 switch(e.key) {
                     case 'ArrowLeft':
-                        if (e.ctrlKey) this.previousSegment();
+                        if (this.pageMode === 'paginated' && !this.hasMediaOverlay) {
+                            this.previousPage();
+                        } else if (e.ctrlKey) {
+                            this.previousSegment();
+                        }
                         break;
                     case 'ArrowRight':
-                        if (e.ctrlKey) this.nextSegment();
+                        if (this.pageMode === 'paginated' && !this.hasMediaOverlay) {
+                            this.nextPage();
+                        } else if (e.ctrlKey) {
+                            this.nextSegment();
+                        }
                         break;
                     case ' ':
                         e.preventDefault();
-                        this.togglePlay();
+                        if (this.hasMediaOverlay) {
+                            this.togglePlay();
+                        } else if (this.pageMode === 'paginated') {
+                            this.nextPage();
+                        }
                         break;
                     case 'f':
                     case 'F':
