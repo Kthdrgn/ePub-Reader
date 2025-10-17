@@ -3344,30 +3344,48 @@
                     await book.loaded.spine;
                     await book.loaded.manifest;
                     
-                    // First check: Look for media-overlay references in spine items
+                    const manifest = book.packaging.manifest;
+                    
+                    // First check: Look for SMIL files in the manifest (most reliable)
+                    for (const [id, item] of Object.entries(manifest)) {
+                        // Check media-type
+                        if (item['media-type'] === 'application/smil+xml') {
+                            console.log('✓ Found SMIL by media-type:', id);
+                            return true;
+                        }
+                        // Check mediaType (alternative property name)
+                        if (item.mediaType === 'application/smil+xml') {
+                            console.log('✓ Found SMIL by mediaType:', id);
+                            return true;
+                        }
+                        // Check href ending
+                        if (item.href && item.href.endsWith('.smil')) {
+                            console.log('✓ Found SMIL by href:', item.href);
+                            return true;
+                        }
+                    }
+                    
+                    // Second check: Look for media-overlay references in manifest items
+                    for (const [id, item] of Object.entries(manifest)) {
+                        // Try different property name variations
+                        if (item['media-overlay'] || item.mediaOverlay || item['mediaOverlay']) {
+                            console.log('✓ Found media-overlay reference:', id);
+                            return true;
+                        }
+                    }
+                    
+                    // Third check: Look for media-overlay references in spine items
                     for (const item of book.spine.items) {
                         const manifestItem = book.packaging.manifest[item.idref || item.id];
-                        if (manifestItem && manifestItem['media-overlay']) {
-                            return true;
+                        if (manifestItem) {
+                            if (manifestItem['media-overlay'] || manifestItem.mediaOverlay || manifestItem['mediaOverlay']) {
+                                console.log('✓ Found media-overlay in spine item:', item.idref || item.id);
+                                return true;
+                            }
                         }
                     }
                     
-                    // Second check: Look for SMIL files in the manifest
-                    const manifest = book.packaging.manifest;
-                    for (const [id, item] of Object.entries(manifest)) {
-                        if (item['media-type'] === 'application/smil+xml' || 
-                            (item.href && item.href.endsWith('.smil'))) {
-                            return true;
-                        }
-                    }
-                    
-                    // Third check: Look for media-overlay in manifest items
-                    for (const [id, item] of Object.entries(manifest)) {
-                        if (item['media-overlay']) {
-                            return true;
-                        }
-                    }
-                    
+                    console.log('✗ No media overlays detected');
                     return false;
                 } catch (e) {
                     console.log('Error detecting media overlay:', e);
@@ -4888,70 +4906,156 @@
                     await this.book.loaded.manifest;
                     
                     this.overlayChapters = [];
+                    const manifest = this.book.packaging.manifest;
                     
-                    this.book.spine.items.forEach((item, index) => {
-                        const manifestItem = this.book.packaging.manifest[item.idref || item.id];
-                        if (manifestItem && manifestItem['media-overlay']) {
-                            item.mediaOverlay = manifestItem['media-overlay'];
-                            this.overlayChapters.push(item);
+                    console.log('=== Checking for Media Overlays ===');
+                    console.log('Manifest:', manifest);
+                    console.log('Spine items:', this.book.spine.items);
+                    
+                    // NEW APPROACH: Directly check the raw packaging XML for media-overlay attributes
+                    // This bypasses any ePub.js parsing issues
+                    const overlayMap = new Map(); // Maps content ID to overlay ID
+                    
+                    // Look through manifest for items with media-overlay attributes
+                    // Check multiple property name formats that ePub.js might use
+                    for (const [id, item] of Object.entries(manifest)) {
+                        // Log all properties to see what we're working with
+                        if (id === 'p001' || id === 's001') {
+                            console.log(`Detailed inspection of ${id}:`, JSON.stringify(item, null, 2));
+                        }
+                        
+                        // Try accessing media-overlay in multiple ways
+                        let overlayId = null;
+                        
+                        // Direct property access
+                        if (item['media-overlay']) overlayId = item['media-overlay'];
+                        else if (item.mediaOverlay) overlayId = item.mediaOverlay;
+                        else if (item['mediaOverlay']) overlayId = item['mediaOverlay'];
+                        
+                        // Check in properties object if it exists
+                        if (!overlayId && item.properties) {
+                            if (typeof item.properties === 'string') {
+                                // Sometimes properties is a space-separated string
+                                const props = item.properties.split(' ');
+                                // Look for media-overlay value (unlikely but check)
+                            } else if (typeof item.properties === 'object') {
+                                overlayId = item.properties['media-overlay'] || 
+                                           item.properties.mediaOverlay ||
+                                           item.properties['mediaOverlay'];
+                            }
+                        }
+                        
+                        if (overlayId) {
+                            console.log(`✓ Found media-overlay: ${id} -> ${overlayId}`);
+                            overlayMap.set(id, overlayId);
+                        }
+                    }
+                    
+                    // If we didn't find any through property access, check the raw XML
+                    if (overlayMap.size === 0) {
+                        console.log('No overlays found via property access, checking raw packaging...');
+                        
+                        // Try to access the raw OPF content
+                        try {
+                            const opfPath = this.book.packaging.manifestPath || 'OEBPS/content.opf';
+                            console.log('Trying to load OPF from:', opfPath);
+                            
+                            // Get the raw OPF file
+                            const opfDoc = this.book.packaging.metadata.layout;
+                            
+                            // Alternative: Look through the archive directly
+                            if (this.book.archive && this.book.archive.zip) {
+                                const opfFiles = Object.keys(this.book.archive.zip.files).filter(f => 
+                                    f.endsWith('.opf') || f.endsWith('content.opf')
+                                );
+                                
+                                if (opfFiles.length > 0) {
+                                    console.log('Found OPF file:', opfFiles[0]);
+                                    const opfFile = this.book.archive.zip.files[opfFiles[0]];
+                                    const opfText = await opfFile.async('text');
+                                    
+                                    // Parse the XML to find media-overlay attributes
+                                    const parser = new DOMParser();
+                                    const opfXml = parser.parseFromString(opfText, 'text/xml');
+                                    const items = opfXml.querySelectorAll('manifest item[media-overlay]');
+                                    
+                                    console.log(`Found ${items.length} items with media-overlay attribute in raw XML`);
+                                    
+                                    items.forEach(item => {
+                                        const id = item.getAttribute('id');
+                                        const overlayId = item.getAttribute('media-overlay');
+                                        console.log(`  ✓ ${id} -> ${overlayId}`);
+                                        overlayMap.set(id, overlayId);
+                                    });
+                                }
+                            }
+                        } catch (e) {
+                            console.log('Could not access raw OPF:', e);
+                        }
+                    }
+                    
+                    console.log('Overlay map:', overlayMap);
+                    
+                    // Now match the overlays to spine items
+                    this.book.spine.items.forEach((spineItem, index) => {
+                        const spineId = spineItem.idref || spineItem.id;
+                        console.log(`Spine item ${index}: id="${spineItem.id}", idref="${spineItem.idref}", href="${spineItem.href}"`);
+                        
+                        if (overlayMap.has(spineId)) {
+                            const overlayId = overlayMap.get(spineId);
+                            console.log(`  ✓ Matched to overlay: ${overlayId}`);
+                            spineItem.mediaOverlay = overlayId;
+                            this.overlayChapters.push(spineItem);
                         }
                     });
 
-                    const manifest = this.book.packaging.manifest;
+                    // Find all SMIL files as backup
                     const smilFiles = [];
-                    
                     for (const [id, item] of Object.entries(manifest)) {
-                        if (item['media-type'] === 'application/smil+xml' || 
-                            item.href.endsWith('.smil')) {
+                        const isSmil = item['media-type'] === 'application/smil+xml' || 
+                                      item.mediaType === 'application/smil+xml' ||
+                                      (item.href && item.href.endsWith('.smil'));
+                        
+                        if (isSmil) {
+                            console.log(`✓ Found SMIL file: ${id} -> ${item.href}`);
                             smilFiles.push({ id, ...item });
                         }
                     }
 
+                    // If still no matches, try filename-based matching
                     if (smilFiles.length > 0 && this.overlayChapters.length === 0) {
-                        for (const [id, item] of Object.entries(manifest)) {
-                            if (item['media-overlay']) {
-                                const overlayId = item['media-overlay'];
-                                const spineItem = this.book.spine.items.find(si => 
-                                    si.idref === id || si.id === id
-                                );
+                        console.log('No direct matches, trying filename-based matching...');
+                        
+                        smilFiles.forEach(smilFile => {
+                            // Extract base filename from SMIL
+                            const smilHref = smilFile.href;
+                            const smilBaseName = smilHref.split('/').pop()
+                                .replace('.xhtml.smil', '')
+                                .replace('.html.smil', '')
+                                .replace('.smil', '');
+                            
+                            console.log(`Trying to match SMIL "${smilBaseName}" from "${smilHref}"`);
+                            
+                            const spineItem = this.book.spine.items.find(si => {
+                                const spineHref = si.href;
+                                const spineBaseName = spineHref.split('/').pop()
+                                    .replace('.xhtml', '')
+                                    .replace('.html', '');
                                 
-                                if (spineItem && !spineItem.mediaOverlay) {
-                                    spineItem.mediaOverlay = overlayId;
-                                    this.overlayChapters.push(spineItem);
-                                }
+                                const match = smilBaseName === spineBaseName;
+                                console.log(`  Comparing "${smilBaseName}" with "${spineBaseName}": ${match}`);
+                                return match;
+                            });
+                            
+                            if (spineItem && !spineItem.mediaOverlay) {
+                                console.log(`  ✓ Matched by filename!`);
+                                spineItem.mediaOverlay = smilFile.id;
+                                this.overlayChapters.push(spineItem);
                             }
-                        }
-                        
-                        if (this.overlayChapters.length === 0) {
-                            smilFiles.forEach(smilFile => {
-                                const baseId = smilFile.id.replace('_overlay', '');
-                                const spineItem = this.book.spine.items.find(si => 
-                                    si.idref === baseId || si.id === baseId
-                                );
-                                
-                                if (spineItem) {
-                                    spineItem.mediaOverlay = smilFile.id;
-                                    this.overlayChapters.push(spineItem);
-                                }
-                            });
-                        }
-                        
-                        if (this.overlayChapters.length === 0) {
-                            smilFiles.forEach(smilFile => {
-                                const smilBaseName = smilFile.href.split('/').pop().replace('.smil', '');
-                                
-                                const spineItem = this.book.spine.items.find(si => {
-                                    const spineFileName = si.href.split('/').pop().replace(/\.(html|xhtml)$/, '');
-                                    return smilBaseName === spineFileName;
-                                });
-                                
-                                if (spineItem) {
-                                    spineItem.mediaOverlay = smilFile.id;
-                                    this.overlayChapters.push(spineItem);
-                                }
-                            });
-                        }
+                        });
                     }
+
+                    console.log(`=== Found ${this.overlayChapters.length} chapters with media overlays ===`);
 
                     if (this.overlayChapters.length > 0) {
                         this.elements.chaptersBtn.disabled = false;
