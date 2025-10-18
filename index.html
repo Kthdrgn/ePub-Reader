@@ -4884,19 +4884,25 @@
                     };
                 }
                 
-                // Calculate available dimensions (the readerContainer already has padding, so use full size)
+                // Calculate available dimensions with padding for readable margins
                 const pageWidth = readerArea.clientWidth;
                 const pageHeight = readerArea.clientHeight;
+                
+                // Reserve space for top and bottom margins (2rem each = ~32px total = ~64px)
+                const verticalPadding = 64; // 2rem top + 2rem bottom
+                const effectivePageHeight = pageHeight - verticalPadding;
                 
                 console.log('Pagination setup:', {
                     pageWidth,
                     pageHeight,
+                    effectivePageHeight,
+                    verticalPadding,
                     readerAreaWidth: readerArea.clientWidth,
                     readerAreaHeight: readerArea.clientHeight
                 });
                 
-                // Remove padding from content element for pagination (we'll add a wrapper with padding)
-                contentElement.style.padding = '0';
+                // Set padding to provide breathing room at top and bottom
+                contentElement.style.padding = '2rem 2rem';
                 
                 // First, let content flow naturally to get its natural height
                 contentElement.style.height = 'auto';
@@ -4908,10 +4914,10 @@
                 setTimeout(() => {
                     const naturalHeight = contentElement.scrollHeight;
                     
-                    console.log('Natural content height:', naturalHeight, 'Page height:', pageHeight);
+                    console.log('Natural content height:', naturalHeight, 'Effective page height:', effectivePageHeight);
                     
-                    // Calculate how many pages we need
-                    this.totalPages = Math.ceil(naturalHeight / pageHeight);
+                    // Calculate how many pages we need based on effective height
+                    this.totalPages = Math.ceil(naturalHeight / effectivePageHeight);
                     this.currentPage = 0;
                     
                     console.log('Calculated total pages:', this.totalPages);
@@ -4939,9 +4945,11 @@
                 
                 this.currentPage = pageIndex;
                 
-                // Calculate scroll position for this page
+                // Calculate scroll position for this page using effective page height
                 const pageHeight = this.elements.readerArea.clientHeight;
-                const scrollPosition = pageIndex * pageHeight;
+                const verticalPadding = 64; // 2rem top + 2rem bottom
+                const effectivePageHeight = pageHeight - verticalPadding;
+                const scrollPosition = pageIndex * effectivePageHeight;
                 
                 // Use transform to shift the content vertically
                 contentElement.style.transform = `translateY(-${scrollPosition}px)`;
