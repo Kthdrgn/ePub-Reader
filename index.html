@@ -3183,6 +3183,19 @@
                 });
                 
                 document.addEventListener('keydown', (e) => this.handleKeyboard(e));
+                
+                // Save progress before closing/refreshing
+                window.addEventListener('beforeunload', () => {
+                    if (this.currentBookId) {
+                        this.saveProgress();
+                        if (this.rendition && this.rendition.location) {
+                            this.saveRegularEPUBProgress(this.rendition.location);
+                        }
+                        if (this.currentSpineIndex !== undefined && this.spineItems) {
+                            this.saveDirectDisplayProgress();
+                        }
+                    }
+                });
             }
 
             renderLibrary() {
@@ -3324,7 +3337,18 @@
             showLibrary() {
                 // Save current progress before leaving
                 if (this.currentBookId) {
+                    // Save progress for audiobooks
                     this.saveProgress();
+                    
+                    // Save progress for regular EPUBs with rendition
+                    if (this.rendition && this.rendition.location) {
+                        this.saveRegularEPUBProgress(this.rendition.location);
+                    }
+                    
+                    // Save progress for direct display mode (file:// protocol)
+                    if (this.currentSpineIndex !== undefined && this.spineItems) {
+                        this.saveDirectDisplayProgress();
+                    }
                 }
                 
                 // Stop playback
@@ -4301,27 +4325,92 @@
             }
 
             saveProgress() {
-                if (!this.currentBookId || !this.currentChapter) return;
+                if (!this.currentBookId) return;
                 
-                const chapterIndex = this.overlayChapters.findIndex(ch => ch.href === this.currentChapter.href);
-                const totalChapters = this.overlayChapters.length;
-                const totalSegments = this.segments.length;
-                
-                // Calculate percentage
-                let percentage = 0;
-                if (totalChapters > 0) {
-                    const chapterProgress = chapterIndex / totalChapters;
-                    const segmentProgress = totalSegments > 0 ? this.currentSegmentIndex / totalSegments : 0;
-                    percentage = Math.round((chapterProgress + (segmentProgress / totalChapters)) * 100);
+                // For audiobooks with media overlay
+                if (this.currentChapter && this.overlayChapters.length > 0) {
+                    const chapterIndex = this.overlayChapters.findIndex(ch => ch.href === this.currentChapter.href);
+                    const totalChapters = this.overlayChapters.length;
+                    const totalSegments = this.segments.length;
+                    
+                    // Calculate percentage
+                    let percentage = 0;
+                    if (totalChapters > 0) {
+                        const chapterProgress = chapterIndex / totalChapters;
+                        const segmentProgress = totalSegments > 0 ? this.currentSegmentIndex / totalSegments : 0;
+                        percentage = Math.round((chapterProgress + (segmentProgress / totalChapters)) * 100);
+                    }
+                    
+                    const progress = {
+                        chapterIndex: chapterIndex,
+                        segmentIndex: this.currentSegmentIndex,
+                        percentage: Math.min(percentage, 100)
+                    };
+                    
+                    this.libraryManager.updateProgress(this.currentBookId, progress);
                 }
+            }
+            
+            saveRegularEPUBProgress(location) {
+                if (!this.currentBookId || !location) return;
                 
-                const progress = {
-                    chapterIndex: chapterIndex,
-                    segmentIndex: this.currentSegmentIndex,
-                    percentage: Math.min(percentage, 100)
-                };
+                try {
+                    // Save CFI (Canonical Fragment Identifier) for exact position
+                    const cfi = location.start?.cfi || location.cfi;
+                    
+                    // Calculate percentage - handle different epub.js modes
+                    let percentage = 0;
+                    
+                    // Try to get percentage from location object
+                    if (location.start?.percentage !== undefined) {
+                        percentage = Math.round(location.start.percentage * 100);
+                    } else if (location.start?.location !== undefined && location.end?.location !== undefined) {
+                        // Calculate from location numbers
+                        const current = location.start.location;
+                        const total = this.book?.locations?.total || 100;
+                        percentage = Math.round((current / total) * 100);
+                    } else if (this.rendition?.location) {
+                        // Fallback to rendition's current location
+                        const currentLoc = this.rendition.location.start;
+                        if (currentLoc?.percentage !== undefined) {
+                            percentage = Math.round(currentLoc.percentage * 100);
+                        }
+                    }
+                    
+                    const progress = {
+                        cfi: cfi,
+                        percentage: Math.min(percentage, 100),
+                        lastRead: new Date().toISOString()
+                    };
+                    
+                    this.libraryManager.updateProgress(this.currentBookId, progress);
+                    
+                    console.log('Progress saved for regular EPUB:', percentage + '%', cfi);
+                } catch (error) {
+                    console.error('Error saving regular EPUB progress:', error);
+                }
+            }
+            
+            saveDirectDisplayProgress() {
+                if (!this.currentBookId || this.currentSpineIndex === undefined || !this.spineItems) return;
                 
-                this.libraryManager.updateProgress(this.currentBookId, progress);
+                try {
+                    // Calculate percentage based on chapter position
+                    const totalChapters = this.spineItems.length;
+                    const percentage = Math.round((this.currentSpineIndex / totalChapters) * 100);
+                    
+                    const progress = {
+                        chapterIndex: this.currentSpineIndex,
+                        percentage: Math.min(percentage, 100),
+                        lastRead: new Date().toISOString()
+                    };
+                    
+                    this.libraryManager.updateProgress(this.currentBookId, progress);
+                    
+                    console.log('Progress saved for direct display:', percentage + '% (chapter', this.currentSpineIndex + 1, 'of', totalChapters + ')');
+                } catch (error) {
+                    console.error('Error saving direct display progress:', error);
+                }
             }
 
             showSettingsModal() {
@@ -5123,8 +5212,16 @@
                         this.spineItems = spineItems;
                         this.readerContainer = readerContainer;
                         
-                        // Load first chapter
-                        await this.displayChapterDirect(0);
+                        // Restore saved progress if available
+                        const bookData = this.libraryManager.getBook(this.currentBookId);
+                        let startChapter = 0;
+                        if (bookData && bookData.progress && bookData.progress.chapterIndex !== undefined) {
+                            startChapter = Math.min(bookData.progress.chapterIndex, spineItems.length - 1);
+                            console.log('Restoring progress to chapter:', startChapter + 1, 'of', spineItems.length);
+                        }
+                        
+                        // Load chapter at saved position
+                        await this.displayChapterDirect(startChapter);
                         
                     } else {
                         // For http:// or https://, use epub.js rendition
@@ -5179,11 +5276,37 @@
                         
                         this.rendition.themes.select('custom');
                         
+                        // Generate locations for progress calculation (this takes a moment)
+                        try {
+                            await this.book.locations.generate(1024);
+                            console.log('Locations generated:', this.book.locations.total);
+                        } catch (error) {
+                            console.warn('Could not generate locations:', error);
+                        }
+                        
                         // Wait for rendition to be ready
                         await this.rendition.display();
                         
                         // Store spine items for navigation
                         this.spineItems = spineItems;
+                        
+                        // Restore saved progress for regular EPUBs
+                        const bookData = this.libraryManager.getBook(this.currentBookId);
+                        if (bookData && bookData.progress && bookData.progress.cfi) {
+                            try {
+                                console.log('Restoring progress to CFI:', bookData.progress.cfi);
+                                await this.rendition.display(bookData.progress.cfi);
+                            } catch (error) {
+                                console.error('Error restoring progress:', error);
+                                // If restoration fails, just stay at the beginning
+                            }
+                        }
+                        
+                        // Track location changes for progress saving
+                        this.rendition.on('relocated', (location) => {
+                            console.log('Relocated event fired:', location);
+                            this.saveRegularEPUBProgress(location);
+                        });
                     }
                     
                     // Hide media controls
@@ -5358,6 +5481,9 @@
                     if (this.pageMode === 'paginated') {
                         this.paginateContent();
                     }
+                    
+                    // Save progress for direct display mode
+                    this.saveDirectDisplayProgress();
                     
                     console.log('[DEBUG] displayChapterDirect complete');
                     
