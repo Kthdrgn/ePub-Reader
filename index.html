@@ -2334,37 +2334,41 @@
                 }
 
                 try {
-                    // Try to download from Google Drive first
+                    // On app startup, ALWAYS download from Google Drive first
+                    console.log('Performing initial sync (download from Drive)...');
                     const downloadResult = await this.syncFromGoogleDrive();
                     
                     if (downloadResult.success) {
-                        // Check if remote is newer
-                        const localBooks = libraryManager.getAllBooks();
-                        const remoteSync = new Date(downloadResult.lastSync);
-                        const localSync = this.lastSyncTime ? new Date(this.lastSyncTime) : new Date(0);
+                        // Successfully downloaded from Drive
+                        console.log('✓ Downloaded library from Google Drive');
                         
-                        if (remoteSync > localSync) {
-                            // Remote is newer, merge data
-                            console.log('Syncing from Google Drive (remote is newer)');
-                            return { 
-                                success: true, 
-                                action: 'downloaded',
-                                data: downloadResult.data,
-                                lastSync: downloadResult.lastSync
-                            };
-                        } else {
-                            // Local is newer or same, upload to Drive
-                            console.log('Uploading to Google Drive (local is newer)');
-                            await this.syncToGoogleDrive(localBooks);
-                            return { success: true, action: 'uploaded' };
-                        }
+                        // Merge remote data with local (smart merge)
+                        const localBooks = libraryManager.getAllBooks();
+                        const remoteBooks = downloadResult.data || [];
+                        const remoteDeletedBooks = downloadResult.deletedBooks || [];
+                        
+                        const mergedBooks = this.mergeLibraries(
+                            localBooks,
+                            remoteBooks,
+                            remoteDeletedBooks
+                        );
+                        
+                        return { 
+                            success: true, 
+                            action: 'downloaded',
+                            data: mergedBooks,
+                            lastSync: downloadResult.lastSync
+                        };
                     } else {
-                        // No remote file, upload local data
+                        // No remote file exists yet, upload local data to create it
                         const localBooks = libraryManager.getAllBooks();
                         if (localBooks.length > 0) {
-                            console.log('Uploading to Google Drive (no remote file)');
+                            console.log('No remote file found, uploading local library to Google Drive');
                             await this.syncToGoogleDrive(localBooks);
                             return { success: true, action: 'uploaded' };
+                        } else {
+                            console.log('No books to sync');
+                            return { success: true, action: 'none' };
                         }
                     }
                 } catch (error) {
@@ -2898,19 +2902,20 @@
                     const result = await this.syncManager.performInitialSync(this.libraryManager);
                     
                     if (result.success && result.action === 'downloaded') {
-                        // Merge downloaded data with local
+                        // Replace local library with merged data
+                        this.libraryManager.books = [];
                         result.data.forEach(book => {
                             this.libraryManager.addBook(book, false);
                         });
                         this.renderLibrary();
-                        this.showNotification('Library synced from Google Drive', 'success');
+                        this.showNotification('✓ Library synced from Google Drive', 'success');
                     } else if (result.success && result.action === 'uploaded') {
-                        this.showNotification('Library uploaded to Google Drive', 'success');
+                        this.showNotification('✓ Library uploaded to Google Drive', 'success');
                     }
                     
-                    // Start periodic auto-sync
+                    // Start periodic auto-sync (uploads only)
                     this.syncManager.startAutoSync(this.libraryManager);
-                    console.log('Auto-sync started (every 5 minutes)');
+                    console.log('Auto-sync started (uploads every 5 minutes)');
                 }
             }
 
@@ -3647,7 +3652,7 @@
                         
                         <div style="display: flex; flex-direction: column; gap: 1rem;">
                             <button id="twoWaySync" style="background: #8b5cf6; color: white; border: none; padding: 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
-                                🔄 Two-Way Sync (Recommended)
+                                🔄 Force Full Sync
                             </button>
                             
                             <button id="uploadToGDrive" style="background: #10b981; color: white; border: none; padding: 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; font-size: 1rem;">
@@ -3672,7 +3677,7 @@
                         </div>
                         
                         <p style="margin-top: 1.5rem; font-size: 0.875rem; color: #cbd5e1; padding: 1rem; background: #0f172a; border-radius: 0.5rem;">
-                            <strong>💡 Tip:</strong> Use Two-Way Sync to automatically merge changes from all devices. Deleted books and progress updates sync correctly!
+                            <strong>💡 Tip:</strong> Use Force Full Sync to merge all changes from Drive and upload the combined result. Auto-sync handles this automatically on startup!
                         </p>
                     </div>
                 `;
@@ -3691,10 +3696,10 @@
                     });
                 }
 
-                // Two-way sync handler (recommended)
+                // Force Full Sync handler
                 modal.querySelector('#twoWaySync').addEventListener('click', async () => {
                     modal.remove();
-                    this.showNotification('🔄 Starting two-way sync...', 'info');
+                    this.showNotification('🔄 Starting force full sync...', 'info');
                     
                     try {
                         // First, download remote data
@@ -3723,7 +3728,7 @@
                             
                             if (uploadResult.success) {
                                 this.renderLibrary();
-                                this.showNotification('✓ Two-way sync complete! All devices now in sync.', 'success');
+                                this.showNotification('✓ Force full sync complete! All devices now in sync.', 'success');
                             } else {
                                 this.showNotification('⚠️ Merge successful but upload failed: ' + uploadResult.error, 'error');
                             }
@@ -3739,7 +3744,7 @@
                             }
                         }
                     } catch (error) {
-                        console.error('Two-way sync error:', error);
+                        console.error('Force full sync error:', error);
                         this.showNotification('Sync failed: ' + error.message, 'error');
                     }
                 });
