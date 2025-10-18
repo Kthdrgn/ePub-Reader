@@ -460,8 +460,7 @@
         .page-navigation {
             position: fixed;
             bottom: 1rem;
-            left: 50%;
-            transform: translateX(-50%);
+            left: 1rem;
             display: none;
             gap: 0.5rem;
             z-index: 1100;
@@ -4799,93 +4798,153 @@
                     this.elements.pageNavigation.classList.add('active');
                     
                     // If we have content loaded, paginate it
-                    if (!this.hasMediaOverlay && this.elements.viewer && this.elements.viewer.innerHTML) {
+                    if (!this.hasMediaOverlay) {
                         this.paginateContent();
                     }
                 } else {
                     this.elements.readerArea.classList.remove('paginated');
                     this.elements.pageNavigation.classList.remove('active');
                     
-                    // Restore scroll mode - only if we have content
-                    if (this.pageContent && this.pageContent.length > 0 && this.currentSpineIndex !== undefined) {
-                        this.displayChapterDirect(this.currentSpineIndex, false);
+                    // Restore scroll mode
+                    const container = this.readerContainer || this.elements.viewer;
+                    const contentElement = container?.querySelector('.chapter-content') || container;
+                    
+                    if (container) {
+                        // Restore container styles
+                        container.style.height = '';
+                        container.style.overflow = '';
+                        container.style.position = '';
                     }
+                    
+                    if (contentElement) {
+                        // Restore original styles
+                        if (this.originalStyles) {
+                            contentElement.style.columnWidth = this.originalStyles.columnWidth;
+                            contentElement.style.columnGap = this.originalStyles.columnGap;
+                            contentElement.style.height = this.originalStyles.height;
+                            contentElement.style.width = this.originalStyles.width;
+                            contentElement.style.maxWidth = this.originalStyles.maxWidth;
+                            contentElement.style.overflow = this.originalStyles.overflow;
+                            contentElement.style.padding = this.originalStyles.padding;
+                            this.originalStyles = null;
+                        } else {
+                            // Fallback if no original styles saved
+                            contentElement.style.columnWidth = '';
+                            contentElement.style.columnGap = '';
+                            contentElement.style.height = '';
+                            contentElement.style.width = '';
+                            contentElement.style.maxWidth = '';
+                            contentElement.style.overflow = '';
+                            contentElement.style.padding = '';
+                        }
+                        
+                        contentElement.style.transform = '';
+                        contentElement.style.transition = '';
+                        contentElement.style.position = '';
+                        
+                        // Restore original content if it was modified
+                        if (this.originalContent) {
+                            contentElement.innerHTML = this.originalContent;
+                            this.originalContent = null;
+                        }
+                    }
+                    
+                    this.elements.readerArea.style.overflow = '';
+                    
+                    this.currentPage = 0;
+                    this.totalPages = 0;
                 }
             }
 
             paginateContent() {
-                if (!this.elements.viewer || !this.elements.viewer.innerHTML) return;
+                if (!this.readerContainer && !this.elements.viewer) return;
                 
-                const viewerElement = this.elements.viewer;
+                const container = this.readerContainer || this.elements.viewer;
                 const readerArea = this.elements.readerArea;
                 
-                // Get the full content
-                const fullContent = viewerElement.innerHTML;
+                // Get the actual content container (with .chapter-content class for direct display)
+                let contentElement = container.querySelector('.chapter-content') || container;
                 
-                // Calculate page height (viewport height minus padding)
-                const pageHeight = readerArea.clientHeight - 100; // Some margin
-                
-                // Create a temporary container to measure content
-                const tempContainer = document.createElement('div');
-                tempContainer.style.cssText = `
-                    position: absolute;
-                    visibility: hidden;
-                    width: ${viewerElement.offsetWidth}px;
-                    font-size: ${this.fontSize}px;
-                    line-height: ${this.getLineHeight()};
-                `;
-                tempContainer.innerHTML = fullContent;
-                document.body.appendChild(tempContainer);
-                
-                // Split content into pages
-                this.pageContent = [];
-                const paragraphs = Array.from(tempContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div'));
-                
-                // If no paragraphs found, just use the whole content as one page
-                if (paragraphs.length === 0) {
-                    this.pageContent = [fullContent];
-                    document.body.removeChild(tempContainer);
-                    this.totalPages = 1;
-                    this.currentPage = 0;
-                    this.displayPage(0);
+                if (!contentElement) {
+                    console.error('No content element found for pagination');
                     return;
                 }
                 
-                let currentPageContent = '';
-                let currentPageHeight = 0;
-                
-                paragraphs.forEach(element => {
-                    const elementHeight = element.offsetHeight;
-                    
-                    if (currentPageHeight + elementHeight > pageHeight && currentPageContent) {
-                        // Save current page and start new one
-                        this.pageContent.push(currentPageContent);
-                        currentPageContent = element.outerHTML;
-                        currentPageHeight = elementHeight;
-                    } else {
-                        currentPageContent += element.outerHTML;
-                        currentPageHeight += elementHeight;
-                    }
-                });
-                
-                // Add last page
-                if (currentPageContent) {
-                    this.pageContent.push(currentPageContent);
+                // Store original content and styles if not already stored
+                if (!this.originalContent) {
+                    this.originalContent = contentElement.innerHTML;
+                    this.originalStyles = {
+                        columnWidth: contentElement.style.columnWidth,
+                        columnGap: contentElement.style.columnGap,
+                        height: contentElement.style.height,
+                        width: contentElement.style.width,
+                        maxWidth: contentElement.style.maxWidth,
+                        overflow: contentElement.style.overflow,
+                        padding: contentElement.style.padding
+                    };
                 }
                 
-                document.body.removeChild(tempContainer);
+                // Calculate available dimensions (the readerContainer already has padding, so use full size)
+                const pageWidth = readerArea.clientWidth;
+                const pageHeight = readerArea.clientHeight;
                 
-                // Display first page
-                this.totalPages = this.pageContent.length;
-                this.currentPage = 0;
-                this.displayPage(0);
+                console.log('Pagination setup:', {
+                    pageWidth,
+                    pageHeight,
+                    readerAreaWidth: readerArea.clientWidth,
+                    readerAreaHeight: readerArea.clientHeight
+                });
+                
+                // Remove padding from content element for pagination (we'll add a wrapper with padding)
+                contentElement.style.padding = '0';
+                
+                // First, let content flow naturally to get its natural height
+                contentElement.style.height = 'auto';
+                contentElement.style.width = '100%';
+                contentElement.style.maxWidth = 'none';
+                contentElement.style.overflow = 'visible';
+                
+                // Force reflow
+                setTimeout(() => {
+                    const naturalHeight = contentElement.scrollHeight;
+                    
+                    console.log('Natural content height:', naturalHeight, 'Page height:', pageHeight);
+                    
+                    // Calculate how many pages we need
+                    this.totalPages = Math.ceil(naturalHeight / pageHeight);
+                    this.currentPage = 0;
+                    
+                    console.log('Calculated total pages:', this.totalPages);
+                    
+                    // The readerContainer becomes the clipping viewport
+                    container.style.height = `${pageHeight}px`;
+                    container.style.overflow = 'hidden';
+                    container.style.position = 'relative';
+                    
+                    // Content element will be transformed
+                    contentElement.style.height = 'auto';
+                    contentElement.style.overflow = 'visible';
+                    contentElement.style.transition = 'transform 0.3s ease';
+                    contentElement.style.position = 'relative';
+                    
+                    this.displayPage(0);
+                }, 100);
             }
 
             displayPage(pageIndex) {
-                if (!this.pageContent || pageIndex < 0 || pageIndex >= this.pageContent.length) return;
+                const container = this.readerContainer || this.elements.viewer;
+                const contentElement = container.querySelector('.chapter-content') || container;
+                
+                if (!contentElement || pageIndex < 0 || pageIndex >= this.totalPages) return;
                 
                 this.currentPage = pageIndex;
-                this.elements.viewer.innerHTML = this.pageContent[pageIndex];
+                
+                // Calculate scroll position for this page
+                const pageHeight = this.elements.readerArea.clientHeight;
+                const scrollPosition = pageIndex * pageHeight;
+                
+                // Use transform to shift the content vertically
+                contentElement.style.transform = `translateY(-${scrollPosition}px)`;
                 
                 // Update page info
                 this.elements.pageInfo.textContent = `Page ${pageIndex + 1} of ${this.totalPages}`;
@@ -4894,19 +4953,24 @@
                 this.elements.prevPageBtn.disabled = pageIndex === 0;
                 this.elements.nextPageBtn.disabled = pageIndex === this.totalPages - 1;
                 
-                // Scroll to top
-                this.elements.readerArea.scrollTop = 0;
+                console.log('Displaying page:', pageIndex + 1, 'Transform Y:', -scrollPosition);
             }
 
             previousPage() {
                 if (this.currentPage > 0) {
                     this.displayPage(this.currentPage - 1);
+                } else if (this.currentSpineIndex > 0) {
+                    // At first page, go to previous chapter
+                    this.displayChapterDirect(this.currentSpineIndex - 1);
                 }
             }
 
             nextPage() {
                 if (this.currentPage < this.totalPages - 1) {
                     this.displayPage(this.currentPage + 1);
+                } else if (this.currentSpineIndex < this.spineItems.length - 1) {
+                    // At last page, go to next chapter
+                    this.displayChapterDirect(this.currentSpineIndex + 1);
                 }
             }
 
@@ -5476,6 +5540,12 @@
                     // Update chapter title
                     const chapterTitle = await this.extractChapterTitle(spineItem);
                     this.elements.bookChapter.textContent = chapterTitle;
+                    
+                    // Reset pagination state for new chapter
+                    this.originalContent = null;
+                    this.originalStyles = null;
+                    this.currentPage = 0;
+                    this.totalPages = 0;
                     
                     // Apply pagination if in paginated mode
                     if (this.pageMode === 'paginated') {
