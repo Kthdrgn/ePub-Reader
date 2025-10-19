@@ -2880,7 +2880,7 @@
                 this.renderLibrary();
                 
                 // Initialize page mode properties
-                this.pageMode = localStorage.getItem('pageMode') || 'scroll';
+                this.pageMode = localStorage.getItem('pageMode') || 'paginated';
                 this.currentPage = 0;
                 this.totalPages = 0;
                 this.pageContent = [];
@@ -3113,7 +3113,7 @@
                 this.fontFamily = localStorage.getItem('fontFamily') || 'sans';
                 this.lineSpacing = localStorage.getItem('lineSpacing') || 'normal';
                 this.textAlign = localStorage.getItem('textAlign') || 'left';
-                this.pageMode = localStorage.getItem('pageMode') || 'scroll';
+                this.pageMode = localStorage.getItem('pageMode') || 'paginated';
                 this.applyFontSize();
                 this.applyFontFamily();
                 this.applyLineSpacing();
@@ -4600,12 +4600,25 @@
                     btn.addEventListener('click', () => {
                         const mode = btn.dataset.mode;
                         this.pageMode = mode;
-                        this.applyPageMode();
                         localStorage.setItem('pageMode', mode);
                         
                         // Update active state
                         pageModeOptions.forEach(b => b.classList.remove('active'));
                         btn.classList.add('active');
+                        
+                        // Update container overflow immediately if using direct display
+                        if (this.readerContainer) {
+                            const containerOverflow = mode === 'paginated' ? 'hidden' : 'auto';
+                            this.readerContainer.style.overflowY = containerOverflow;
+                        }
+                        
+                        // Apply the mode and reload current chapter
+                        this.applyPageMode();
+                        
+                        // Reload current chapter if using direct display
+                        if (this.readerContainer && this.currentSpineIndex !== undefined) {
+                            this.displayChapterDirect(this.currentSpineIndex, false);
+                        }
                     });
                 });
                 
@@ -4810,8 +4823,9 @@
                     const contentElement = container?.querySelector('.chapter-content') || container;
                     
                     if (container) {
-                        // Restore container styles
+                        // Restore container styles for scrolling
                         container.style.height = '';
+                        container.style.overflowY = 'auto';
                         container.style.overflow = '';
                         container.style.position = '';
                     }
@@ -4820,27 +4834,34 @@
                         // Restore original styles
                         if (this.originalStyles) {
                             contentElement.style.columnWidth = this.originalStyles.columnWidth;
+                            contentElement.style.columnCount = this.originalStyles.columnCount || '';
                             contentElement.style.columnGap = this.originalStyles.columnGap;
                             contentElement.style.height = this.originalStyles.height;
                             contentElement.style.width = this.originalStyles.width;
                             contentElement.style.maxWidth = this.originalStyles.maxWidth;
                             contentElement.style.overflow = this.originalStyles.overflow;
                             contentElement.style.padding = this.originalStyles.padding;
+                            contentElement.style.boxSizing = this.originalStyles.boxSizing || '';
                             this.originalStyles = null;
                         } else {
                             // Fallback if no original styles saved
                             contentElement.style.columnWidth = '';
+                            contentElement.style.columnCount = '';
                             contentElement.style.columnGap = '';
                             contentElement.style.height = '';
                             contentElement.style.width = '';
                             contentElement.style.maxWidth = '';
                             contentElement.style.overflow = '';
                             contentElement.style.padding = '';
+                            contentElement.style.boxSizing = '';
                         }
                         
                         contentElement.style.transform = '';
                         contentElement.style.transition = '';
                         contentElement.style.position = '';
+                        contentElement.style.top = '';
+                        contentElement.style.left = '';
+                        contentElement.style.willChange = '';
                         
                         // Restore original content if it was modified
                         if (this.originalContent) {
@@ -4875,63 +4896,61 @@
                     this.originalContent = contentElement.innerHTML;
                     this.originalStyles = {
                         columnWidth: contentElement.style.columnWidth,
+                        columnCount: contentElement.style.columnCount,
                         columnGap: contentElement.style.columnGap,
                         height: contentElement.style.height,
                         width: contentElement.style.width,
                         maxWidth: contentElement.style.maxWidth,
                         overflow: contentElement.style.overflow,
-                        padding: contentElement.style.padding
+                        padding: contentElement.style.padding,
+                        boxSizing: contentElement.style.boxSizing
                     };
                 }
                 
-                // Calculate available dimensions with padding for readable margins
+                // Calculate available dimensions
                 const pageWidth = readerArea.clientWidth;
                 const pageHeight = readerArea.clientHeight;
-                
-                // Reserve space for top and bottom margins (2rem each = ~32px total = ~64px)
-                const verticalPadding = 64; // 2rem top + 2rem bottom
-                const effectivePageHeight = pageHeight - verticalPadding;
                 
                 console.log('Pagination setup:', {
                     pageWidth,
                     pageHeight,
-                    effectivePageHeight,
-                    verticalPadding,
                     readerAreaWidth: readerArea.clientWidth,
                     readerAreaHeight: readerArea.clientHeight
                 });
                 
-                // Set padding to provide breathing room at top and bottom
-                contentElement.style.padding = '2rem 2rem';
+                // Set up container as viewport
+                container.style.height = `${pageHeight}px`;
+                container.style.overflow = 'hidden';
+                container.style.position = 'relative';
                 
-                // First, let content flow naturally to get its natural height
-                contentElement.style.height = 'auto';
-                contentElement.style.width = '100%';
+                // IMPORTANT: Use box-sizing border-box so padding is included in width/height
+                // Then column-width equals the full pageWidth, and padding creates margins
+                contentElement.style.boxSizing = 'border-box';
+                contentElement.style.padding = '2rem';
+                contentElement.style.columnWidth = `${pageWidth}px`;
+                contentElement.style.columnGap = '0';
+                contentElement.style.columnFill = 'auto';
+                contentElement.style.height = `${pageHeight}px`;
+                contentElement.style.width = 'auto';
                 contentElement.style.maxWidth = 'none';
                 contentElement.style.overflow = 'visible';
+                contentElement.style.position = 'absolute';
+                contentElement.style.top = '0';
+                contentElement.style.left = '0';
+                contentElement.style.transition = 'transform 0.3s ease';
+                contentElement.style.willChange = 'transform';
                 
-                // Force reflow
+                // Force reflow and measure
                 setTimeout(() => {
-                    const naturalHeight = contentElement.scrollHeight;
+                    const contentScrollWidth = contentElement.scrollWidth;
                     
-                    console.log('Natural content height:', naturalHeight, 'Effective page height:', effectivePageHeight);
+                    console.log('Content scrollWidth:', contentScrollWidth, 'Page width:', pageWidth);
                     
-                    // Calculate how many pages we need based on effective height
-                    this.totalPages = Math.ceil(naturalHeight / effectivePageHeight);
+                    // Calculate pages: each page is pageWidth wide
+                    this.totalPages = Math.max(1, Math.ceil(contentScrollWidth / pageWidth));
                     this.currentPage = 0;
                     
-                    console.log('Calculated total pages:', this.totalPages);
-                    
-                    // The readerContainer becomes the clipping viewport
-                    container.style.height = `${pageHeight}px`;
-                    container.style.overflow = 'hidden';
-                    container.style.position = 'relative';
-                    
-                    // Content element will be transformed
-                    contentElement.style.height = 'auto';
-                    contentElement.style.overflow = 'visible';
-                    contentElement.style.transition = 'transform 0.3s ease';
-                    contentElement.style.position = 'relative';
+                    console.log('Calculated total pages:', this.totalPages, 'Pages based on scroll:', Math.ceil(contentScrollWidth / pageWidth));
                     
                     this.displayPage(0);
                 }, 100);
@@ -4945,14 +4964,20 @@
                 
                 this.currentPage = pageIndex;
                 
-                // Calculate scroll position for this page using effective page height
-                const pageHeight = this.elements.readerArea.clientHeight;
-                const verticalPadding = 64; // 2rem top + 2rem bottom
-                const effectivePageHeight = pageHeight - verticalPadding;
-                const scrollPosition = pageIndex * effectivePageHeight;
+                // Calculate horizontal scroll position for this page
+                // Each page shift needs to account for the full viewport width
+                const pageWidth = this.elements.readerArea.clientWidth;
+                const scrollPosition = pageIndex * pageWidth;
                 
-                // Use transform to shift the content vertically
-                contentElement.style.transform = `translateY(-${scrollPosition}px)`;
+                console.log('[PAGINATION] Displaying page:', pageIndex + 1, {
+                    pageWidth,
+                    scrollPosition,
+                    totalPages: this.totalPages,
+                    contentScrollWidth: contentElement.scrollWidth
+                });
+                
+                // Use transform to shift the content horizontally
+                contentElement.style.transform = `translateX(-${scrollPosition}px)`;
                 
                 // Update page info
                 this.elements.pageInfo.textContent = `Page ${pageIndex + 1} of ${this.totalPages}`;
@@ -4960,8 +4985,6 @@
                 // Update button states
                 this.elements.prevPageBtn.disabled = pageIndex === 0;
                 this.elements.nextPageBtn.disabled = pageIndex === this.totalPages - 1;
-                
-                console.log('Displaying page:', pageIndex + 1, 'Transform Y:', -scrollPosition);
             }
 
             previousPage() {
@@ -5269,10 +5292,11 @@
                         // Create a container for manual chapter display
                         const readerContainer = document.createElement('div');
                         readerContainer.id = 'epub-reader-container';
+                        const containerOverflow = this.pageMode === 'paginated' ? 'hidden' : 'auto';
                         readerContainer.style.cssText = `
                             width: 100%;
                             height: 100%;
-                            overflow-y: auto;
+                            overflow-y: ${containerOverflow};
                             padding: 2rem;
                             background: white;
                             color: black;
@@ -5303,7 +5327,7 @@
                         renditionContainer.style.cssText = `
                             width: 100%;
                             height: 100%;
-                            overflow: auto;
+                            overflow: hidden;
                         `;
                         viewerElement.appendChild(renditionContainer);
                         
@@ -5311,8 +5335,8 @@
                             width: '100%',
                             height: '100%',
                             spread: 'none',
-                            flow: 'scrolled',
-                            overflow: 'auto'
+                            flow: 'paginated',
+                            overflow: 'hidden'
                         });
                         
                         // Register themes BEFORE displaying
@@ -5486,8 +5510,6 @@
                                 font-family: ${fontFamily} !important;
                                 text-align: ${textAlign} !important;
                                 line-height: ${lineHeight} !important;
-                                max-width: 800px;
-                                margin: 0 auto;
                                 background: ${bgColor} !important;
                                 color: ${textColor} !important;
                                 padding: 2rem;
